@@ -133,8 +133,8 @@ async def read(args: argparse.Namespace) -> None:
         await pool.close()
 
 
-def _build_browse_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+def build_browse_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    parser = parser or argparse.ArgumentParser(
         prog="doc-hub-browse",
         description="Browse the indexed document tree for a corpus.",
     )
@@ -145,8 +145,8 @@ def _build_browse_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_read_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+def build_read_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    parser = parser or argparse.ArgumentParser(
         prog="doc-hub-read",
         description="Read a document from a corpus.",
     )
@@ -158,15 +158,23 @@ def _build_read_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_browse_parser() -> argparse.ArgumentParser:
+    return build_browse_parser()
+
+
+def _build_read_parser() -> argparse.ArgumentParser:
+    return build_read_parser()
+
+
 def browse_main(argv: list[str] | None = None) -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    args = _build_browse_parser().parse_args(argv)
+    args = build_browse_parser().parse_args(argv)
     asyncio.run(browse(args))
 
 
 def read_main(argv: list[str] | None = None) -> None:
     load_dotenv()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    args = _build_read_parser().parse_args(argv)
+    args = build_read_parser().parse_args(argv)
     asyncio.run(read(args))

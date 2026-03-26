@@ -11,6 +11,7 @@ the existing pydantic-ai-docs mcp_server.py approach.
 
 from __future__ import annotations
 
+import argparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1345,6 +1346,23 @@ class TestAppState:
 
 class TestMainEntryPoint:
     """Tests for the main() CLI entry point."""
+
+    def test_build_mcp_parser_accepts_existing_parser(self):
+        from doc_hub.mcp_server import build_mcp_parser
+
+        parser = argparse.ArgumentParser()
+        built = build_mcp_parser(parser)
+        assert built is parser
+        args = parser.parse_args([])
+        assert args.transport == "stdio"
+
+    def test_handle_mcp_args_calls_server_run_with_stdio(self):
+        from doc_hub.mcp_server import handle_mcp_args
+
+        args = argparse.Namespace(transport="stdio", host="127.0.0.1", port=8340)
+        with patch.object(server, "run") as mock_run:
+            handle_mcp_args(args)
+            mock_run.assert_called_once_with(transport="stdio")
 
     def test_main_calls_server_run_with_stdio(self):
         """main() calls server.run(transport='stdio')."""

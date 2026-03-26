@@ -468,9 +468,9 @@ def _log_elapsed(corpus: Corpus, start: float) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
+def _build_arg_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
-    parser = argparse.ArgumentParser(
+    parser = parser or argparse.ArgumentParser(
         description="doc-hub pipeline: fetch → parse → embed → index → tree",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -531,17 +531,7 @@ Examples:
     return parser
 
 
-def main() -> None:
-    """CLI entry point: ``doc-hub-pipeline``."""
-    load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-    parser = _build_arg_parser()
-    args = parser.parse_args()
-
-    # ------------------------------------------------------------------ #
-    # Resolve corpus from DB                                              #
-    # ------------------------------------------------------------------ #
+def handle_pipeline_run_args(args: argparse.Namespace) -> None:
     async def _run() -> None:
         from doc_hub.db import create_pool, ensure_schema, get_corpus  # noqa: PLC0415
 
@@ -571,6 +561,16 @@ def main() -> None:
             await pool.close()
 
     asyncio.run(_run())
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: ``doc-hub-pipeline``."""
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+    handle_pipeline_run_args(args)
 
 
 async def sync_all(

@@ -542,9 +542,9 @@ async def _get_document_impl(
 # ---------------------------------------------------------------------------
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse CLI arguments for the MCP server."""
-    parser = argparse.ArgumentParser(
+def build_mcp_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    """Build CLI arguments for the MCP server."""
+    parser = parser or argparse.ArgumentParser(
         prog="doc-hub-mcp",
         description="doc-hub MCP server — documentation search for LLMs",
     )
@@ -565,7 +565,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_PORT,
         help=f"Port for SSE/HTTP transports (default: {DEFAULT_PORT})",
     )
-    return parser.parse_args(argv)
+    return parser
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_mcp_parser().parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -586,6 +590,10 @@ def main(argv: list[str] | None = None) -> None:
         doc-hub-mcp --transport sse --port 9000  # SSE on :9000
     """
     args = _parse_args(argv)
+    handle_mcp_args(args)
+
+
+def handle_mcp_args(args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",

@@ -26,7 +26,7 @@ source .venv/bin/activate
 Verify:
 
 ```bash
-doc-hub-search --help
+doc-hub --help
 ```
 
 ## Requirements
@@ -64,40 +64,42 @@ export DOC_HUB_DATABASE_URL="postgresql://postgres:mypassword@localhost:5432/pos
 ### 3. Index your first corpus
 
 ```bash
-doc-hub-pipeline --corpus pydantic-ai
+doc-hub pipeline run --corpus pydantic-ai
 ```
 
 ### 4. Search
 
 ```bash
-doc-hub-search "how do I handle retries?" --corpus pydantic-ai
+doc-hub docs search "how do I handle retries?" --corpus pydantic-ai
 ```
 
 ## CLI reference
 
-| Script | Description |
+| Command | Description |
 |--------|-------------|
-| `doc-hub-pipeline` | Run the fetch → parse → embed → index pipeline for a corpus |
-| `doc-hub-search` | Hybrid search CLI |
-| `doc-hub-mcp` | Start the MCP server |
-| `doc-hub-eval` | Evaluate retrieval quality |
-| `doc-hub-sync-all` | Run the pipeline for all enabled corpora |
+| `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus |
+| `doc-hub docs read` | Read a document or section |
+| `doc-hub docs search` | Hybrid search CLI |
+| `doc-hub pipeline run` | Run the fetch → parse → embed → index → tree pipeline for a corpus |
+| `doc-hub pipeline sync-all` | Run the pipeline for all enabled corpora |
+| `doc-hub pipeline eval` | Evaluate retrieval quality |
+| `doc-hub serve mcp` | Start the MCP server |
 
 See [docs/user/cli-reference.md](docs/user/cli-reference.md) for full flags and examples.
 
 ## MCP server
 
-Exposes four tools via FastMCP. Supports stdio (default), SSE, and streamable-http transports.
+Exposes six tools via FastMCP. Supports stdio (default), SSE, and streamable-http transports.
 
 ```bash
 # stdio (default — for Claude Desktop, Claude Code)
-doc-hub-mcp
+doc-hub serve mcp
 
 # SSE (persistent service)
-doc-hub-mcp --transport sse --port 8340
+doc-hub serve mcp --transport sse --port 8340
 
 # streamable-http
-doc-hub-mcp --transport streamable-http --port 8340
+doc-hub serve mcp --transport streamable-http --port 8340
 ```
 
 ### Claude Desktop / Claude Code configuration
@@ -108,7 +110,8 @@ doc-hub-mcp --transport streamable-http --port 8340
 {
   "mcpServers": {
     "doc-hub": {
-      "command": "doc-hub-mcp",
+      "command": "doc-hub",
+      "args": ["serve", "mcp"],
       "env": { "GEMINI_API_KEY": "<key>" }
     }
   }
@@ -140,7 +143,7 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-ExecStart=doc-hub-mcp --transport sse --port 8340
+ExecStart=doc-hub serve mcp --transport sse --port 8340
 Restart=always
 RestartSec=10
 Environment=HOME=%h

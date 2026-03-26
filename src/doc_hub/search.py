@@ -452,10 +452,8 @@ def search_docs_sync(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    """CLI entry point: ``doc-hub-search``."""
-    load_dotenv()
-    parser = argparse.ArgumentParser(
+def build_search_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    parser = parser or argparse.ArgumentParser(
         description="Search doc-hub with hybrid vector + full-text search"
     )
     parser.add_argument("query", help="Search query")
@@ -540,15 +538,15 @@ def main() -> None:
         action="store_true",
         help="Output results as JSON",
     )
-    args = parser.parse_args()
+    return parser
 
-    # Configure logging
+
+def handle_search_args(args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=logging.DEBUG if os.environ.get("LOGLEVEL") == "DEBUG" else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 
-    # Build SearchConfig from CLI args when any advanced tuning flag is set
     config = None
     if any(x is not None for x in [args.vector_limit, args.text_limit, args.rrfk, args.language]):
         config = SearchConfig(
@@ -615,6 +613,14 @@ def main() -> None:
         preview = r.content[:200].replace("\n", " ")
         print(f"    Preview:    {preview}...")
     print()
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: ``doc-hub-search``."""
+    load_dotenv()
+    parser = build_search_parser()
+    args = parser.parse_args(argv)
+    handle_search_args(args)
 
 
 if __name__ == "__main__":

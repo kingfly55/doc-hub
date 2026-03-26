@@ -168,7 +168,7 @@ def test_browse_main_uses_load_dotenv_and_asyncio_run():
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
         patch("doc_hub.browse.asyncio.run") as mock_asyncio_run,
         patch.object(browse_module.logging, "basicConfig") as mock_basic_config,
-        patch.object(browse_module, "_build_browse_parser") as mock_parser_builder,
+        patch.object(browse_module, "build_browse_parser") as mock_parser_builder,
         patch.object(browse_module, "browse", new=MagicMock(return_value="browse-coro")) as mock_browse,
     ):
         mock_parser = MagicMock()
@@ -195,7 +195,7 @@ def test_read_main_uses_load_dotenv_and_asyncio_run():
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
         patch("doc_hub.browse.asyncio.run") as mock_asyncio_run,
         patch.object(browse_module.logging, "basicConfig") as mock_basic_config,
-        patch.object(browse_module, "_build_read_parser") as mock_parser_builder,
+        patch.object(browse_module, "build_read_parser") as mock_parser_builder,
         patch.object(browse_module, "read", new=MagicMock(return_value="read-coro")) as mock_read,
     ):
         mock_parser = MagicMock()
@@ -315,5 +315,4 @@ def test_pyproject_entry_points():
         data = tomllib.load(f)
 
     scripts = data["project"]["scripts"]
-    assert scripts["doc-hub-browse"] == "doc_hub.browse:browse_main"
-    assert scripts["doc-hub-read"] == "doc_hub.browse:read_main"
+    assert scripts == {"doc-hub": "doc_hub.cli.main:main"}

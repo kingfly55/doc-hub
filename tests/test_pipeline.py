@@ -5,6 +5,7 @@ Unit tests only — no network, no DB required. DB and HTTP calls are mocked.
 
 from __future__ import annotations
 
+import argparse
 import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,7 @@ from doc_hub.fetchers import DEFAULT_RETRIES, DEFAULT_WORKERS
 from doc_hub.models import Corpus
 from doc_hub.pipeline import (
     _build_arg_parser,
+    handle_pipeline_run_args,
     run_fetch,
     run_pipeline,
     sync_all,
@@ -91,6 +93,39 @@ def test_parser_invalid_stage():
     parser = _build_arg_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--corpus", "x", "--stage", "invalid"])
+
+
+def test_build_arg_parser_accepts_existing_parser():
+    parser = argparse.ArgumentParser()
+    built = _build_arg_parser(parser)
+    assert built is parser
+    args = parser.parse_args(["--corpus", "demo"])
+    assert args.corpus == "demo"
+
+
+def test_handle_pipeline_run_args_uses_asyncio_run():
+    args = argparse.Namespace(
+        corpus="demo",
+        stage=None,
+        clean=False,
+        skip_download=False,
+        full_reindex=False,
+        retry_failed=False,
+        workers=DEFAULT_WORKERS,
+        retries=DEFAULT_RETRIES,
+    )
+
+    captured = {}
+
+    def fake_run(coro):
+        captured["coro"] = coro
+        coro.close()
+
+    with patch("doc_hub.pipeline.asyncio.run", side_effect=fake_run) as mock_asyncio_run:
+        handle_pipeline_run_args(args)
+
+    mock_asyncio_run.assert_called_once()
+    assert "coro" in captured
 
 
 def test_parser_clean_flag():

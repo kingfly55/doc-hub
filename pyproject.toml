@@ -21,13 +21,7 @@ build-backend = "hatchling.build"
 packages = ["src/doc_hub"]
 
 [project.scripts]
-doc-hub-pipeline  = "doc_hub.pipeline:main"
-doc-hub-search    = "doc_hub.search:main"
-doc-hub-mcp       = "doc_hub.mcp_server:main"
-doc-hub-eval      = "doc_hub.eval:main"
-doc-hub-sync-all  = "doc_hub.pipeline:sync_all_main"
-doc-hub-browse    = "doc_hub.browse:browse_main"
-doc-hub-read      = "doc_hub.browse:read_main"
+doc-hub = "doc_hub.cli.main:main"
 
 [project.entry-points."doc_hub.fetchers"]
 llms_txt = "doc_hub._builtins.fetchers.llms_txt:LlmsTxtFetcher"

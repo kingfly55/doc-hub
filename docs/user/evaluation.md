@@ -1,6 +1,6 @@
 # Retrieval Evaluation
 
-doc-hub includes a built-in evaluation tool (`doc-hub-eval`) that measures how well the search index returns relevant results for a set of known queries. This guide covers how to write eval files, run evaluations, and interpret the results.
+doc-hub includes a built-in evaluation tool (`doc-hub pipeline eval`) that measures how well the search index returns relevant results for a set of known queries. This guide covers how to write eval files, run evaluations, and interpret the results.
 
 ---
 
@@ -96,25 +96,25 @@ The `list_eval_corpora()` function scans the eval directory for `*.json` files a
 ### Evaluate a specific corpus
 
 ```
-doc-hub-eval --corpus pydantic-ai
+doc-hub pipeline eval --corpus pydantic-ai
 ```
 
 ### Evaluate all corpora with eval files
 
 ```
-doc-hub-eval --all
+doc-hub pipeline eval --all
 ```
 
 ### Default (no flags) — same as `--all`
 
 ```
-doc-hub-eval
+doc-hub pipeline eval
 ```
 
 ### With verbose output and JSON report
 
 ```
-doc-hub-eval --corpus pydantic-ai --verbose --output report.json
+doc-hub pipeline eval --corpus pydantic-ai --verbose --output report.json
 ```
 
 `--verbose` prints per-query status (hit/miss, reciprocal rank, top similarity, and heading of the top result) as queries run.
@@ -124,7 +124,7 @@ doc-hub-eval --corpus pydantic-ai --verbose --output report.json
 ### Override pass thresholds
 
 ```
-doc-hub-eval --corpus fastapi --min-precision 0.70 --min-mrr 0.50
+doc-hub pipeline eval --corpus fastapi --min-precision 0.70 --min-mrr 0.50
 ```
 
 ### All CLI flags
@@ -272,4 +272,4 @@ The output is a JSON array, one object per corpus, each with the same structure 
 
 **Aim for 20–30 queries per corpus** as a starting baseline. Add new queries whenever you discover a search failure in real use.
 
-**Validate before committing:** `load_test_queries()` raises `ValueError` if any entry is missing `id`, `query`, or both expectation fields. Run `doc-hub-eval --corpus your-corpus` locally to catch malformed entries early.
+**Validate before committing:** `load_test_queries()` raises `ValueError` if any entry is missing `id`, `query`, or both expectation fields. Run `doc-hub pipeline eval --corpus your-corpus` locally to catch malformed entries early.

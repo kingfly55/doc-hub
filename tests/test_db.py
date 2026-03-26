@@ -424,7 +424,7 @@ def test_pyproject_has_asyncpg():
 
 
 def test_pyproject_scripts():
-    """Verify all expected CLI entry points are defined in pyproject.toml."""
+    """Verify the canonical CLI entry point is defined in pyproject.toml."""
     import tomllib
     from pathlib import Path
 
@@ -433,15 +433,7 @@ def test_pyproject_scripts():
         data = tomllib.load(f)
 
     scripts = data["project"].get("scripts", {})
-    expected = [
-        "doc-hub-pipeline",
-        "doc-hub-search",
-        "doc-hub-mcp",
-        "doc-hub-eval",
-        "doc-hub-sync-all",
-    ]
-    for script in expected:
-        assert script in scripts, f"Missing script entry point: {script}"
+    assert scripts == {"doc-hub": "doc_hub.cli.main:main"}
 
 
 # ---------------------------------------------------------------------------

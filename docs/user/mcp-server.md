@@ -28,7 +28,7 @@ On startup, the server creates an asyncpg connection pool and runs `ensure_schem
 The server is spawned once per session by the MCP client (Claude Desktop, Claude Code, or any stdio-capable client). Communication happens over stdin/stdout. There is no network port.
 
 ```bash
-doc-hub-mcp
+doc-hub serve mcp
 ```
 
 Use this for Claude Desktop and Claude Code integrations. It is the simplest configuration — no service management required.
@@ -38,7 +38,7 @@ Use this for Claude Desktop and Claude Code integrations. It is the simplest con
 The server runs as a persistent HTTP service. Clients connect to `http://<host>:<port>/sse`. This is suitable for running as a systemd service that multiple agents can reach simultaneously.
 
 ```bash
-doc-hub-mcp --transport sse --port 8340
+doc-hub serve mcp --transport sse --port 8340
 ```
 
 ### streamable-http
@@ -46,7 +46,7 @@ doc-hub-mcp --transport sse --port 8340
 The newer MCP HTTP transport. Uses the same host/port arguments as SSE.
 
 ```bash
-doc-hub-mcp --transport streamable-http --port 8340
+doc-hub serve mcp --transport streamable-http --port 8340
 ```
 
 ---
@@ -55,16 +55,16 @@ doc-hub-mcp --transport streamable-http --port 8340
 
 ```bash
 # stdio — spawned per session (default)
-doc-hub-mcp
+doc-hub serve mcp
 
 # SSE — persistent HTTP service on localhost:8340
-doc-hub-mcp --transport sse --port 8340
+doc-hub serve mcp --transport sse --port 8340
 
 # SSE on a custom host and port
-doc-hub-mcp --transport sse --host 0.0.0.0 --port 9000
+doc-hub serve mcp --transport sse --host 0.0.0.0 --port 9000
 
 # streamable-http
-doc-hub-mcp --transport streamable-http --port 8340
+doc-hub serve mcp --transport streamable-http --port 8340
 ```
 
 **CLI flags:**
@@ -92,7 +92,7 @@ Claude Desktop spawns the server automatically when a session starts. Use this i
   "mcpServers": {
     "doc-hub": {
       "command": "uv",
-      "args": ["run", "--package", "doc-hub", "doc-hub-mcp"],
+      "args": ["run", "--package", "doc-hub", "doc-hub", "serve", "mcp"],
       "env": {
         "GEMINI_API_KEY": "<your-key>"
       }
@@ -127,7 +127,7 @@ Use this if the server is already running (e.g. as a systemd service). Claude De
 Pass the MCP config directly when launching Claude Code:
 
 ```bash
-claude --mcp '{"mcpServers":{"doc-hub":{"command":"uv","args":["run","--package","doc-hub","doc-hub-mcp"]}}}'
+claude --mcp '{"mcpServers":{"doc-hub":{"command":"uv","args":["run","--package","doc-hub","doc-hub serve mcp"]}}}'
 ```
 
 ### Using `settings.json`
@@ -139,7 +139,7 @@ Add the server to `.claude/settings.json` in your project or to the global setti
   "mcpServers": {
     "doc-hub": {
       "command": "uv",
-      "args": ["run", "--package", "doc-hub", "doc-hub-mcp"],
+      "args": ["run", "--package", "doc-hub", "doc-hub", "serve", "mcp"],
       "env": {
         "GEMINI_API_KEY": "<your-key>"
       }
@@ -177,7 +177,7 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-ExecStart=doc-hub-mcp --transport sse --port 8340
+ExecStart=doc-hub serve mcp --transport sse --port 8340
 Restart=always
 RestartSec=10
 Environment=HOME=%h

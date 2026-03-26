@@ -6,6 +6,7 @@ The search_docs function is mocked throughout.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import tempfile
@@ -27,8 +28,10 @@ from doc_hub.eval import (
     _is_hit,
     _is_hit_single,
     _reciprocal_rank,
+    build_eval_parser,
     evaluate,
     get_eval_file,
+    handle_eval_args,
     list_eval_corpora,
     load_test_queries,
     print_report,
@@ -105,6 +108,57 @@ class TestDefaultThresholds:
 
     def test_mrr_threshold_value(self):
         assert DEFAULT_MRR_THRESHOLD == 0.60
+
+
+class TestEvalCliHelpers:
+    def test_build_eval_parser_accepts_existing_parser(self):
+        parser = argparse.ArgumentParser()
+        built = build_eval_parser(parser)
+        assert built is parser
+        args = parser.parse_args(["--all"])
+        assert args.all is True
+
+    def test_handle_eval_args_runs_all_corpora(self):
+        args = argparse.Namespace(
+            corpus=None,
+            all=True,
+            limit=5,
+            verbose=False,
+            output=None,
+            min_precision=DEFAULT_PRECISION_THRESHOLD,
+            min_mrr=DEFAULT_MRR_THRESHOLD,
+        )
+        pool = _make_pool()
+        report = EvalReport(
+            corpus="demo",
+            total=1,
+            hits=1,
+            precision_at_n=1.0,
+            mrr=1.0,
+            n=5,
+            failed_queries=[],
+            low_similarity_queries=[],
+            query_results=[],
+            passed=True,
+        )
+
+        captured = {}
+
+        def fake_run(coro):
+            captured["coro"] = coro
+            coro.close()
+            return [report]
+
+        with (
+            patch("doc_hub.eval.asyncio.run", side_effect=fake_run),
+            patch("doc_hub.eval.list_eval_corpora", return_value=["demo"]),
+            patch("doc_hub.eval.get_eval_file", return_value=Path("demo.json")),
+            patch("doc_hub.eval.sys.exit") as mock_exit,
+        ):
+            handle_eval_args(args)
+
+        mock_exit.assert_called_once_with(0)
+        assert "coro" in captured
 
 
 # ---------------------------------------------------------------------------

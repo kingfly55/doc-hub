@@ -448,14 +448,11 @@ def print_report(report: EvalReport) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    """CLI entry point for retrieval quality evaluation."""
-    load_dotenv()
-    parser = argparse.ArgumentParser(
+def build_eval_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    parser = parser or argparse.ArgumentParser(
         description="Evaluate doc-hub retrieval quality (Precision@5, MRR)"
     )
 
-    # Corpus selection (mutually exclusive)
     corpus_group = parser.add_mutually_exclusive_group()
     corpus_group.add_argument(
         "--corpus",
@@ -497,19 +494,18 @@ def main() -> None:
         default=DEFAULT_MRR_THRESHOLD,
         help=f"Minimum MRR threshold (default: {DEFAULT_MRR_THRESHOLD})",
     )
-    args = parser.parse_args()
+    return parser
 
-    # Configure logging
+
+def handle_eval_args(args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=logging.DEBUG if os.environ.get("LOGLEVEL") == "DEBUG" else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 
-    # Determine which corpora to evaluate
     if args.corpus:
         slugs = [args.corpus]
     elif args.all or True:
-        # Default (no --corpus) also runs all available evals
         slugs = list_eval_corpora()
         if not slugs:
             print(
@@ -572,6 +568,14 @@ def main() -> None:
         print(f"Report written to: {output_path}")
 
     sys.exit(0 if all_passed else 1)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point for retrieval quality evaluation."""
+    load_dotenv()
+    parser = build_eval_parser()
+    args = parser.parse_args(argv)
+    handle_eval_args(args)
 
 
 if __name__ == "__main__":

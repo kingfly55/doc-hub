@@ -2,7 +2,7 @@
 
 All environment variables recognized by doc-hub, their defaults, and how they interact.
 
-Every CLI entry point (`doc-hub-pipeline`, `doc-hub-search`, `doc-hub-mcp`, `doc-hub-eval`, `doc-hub-sync-all`) calls `load_dotenv()` on startup, so you can place a `.env` file at your repo root or working directory instead of exporting variables into your shell.
+The unified `doc-hub` CLI calls `load_dotenv()` before dispatching commands, so you can place a `.env` file at your repo root or working directory instead of exporting variables into your shell.
 
 ---
 
@@ -24,7 +24,7 @@ Every CLI entry point (`doc-hub-pipeline`, `doc-hub-search`, `doc-hub-mcp`, `doc
 | `DOC_HUB_DATA_DIR` | See below | No | Override data root directory |
 | `XDG_DATA_HOME` | — | No | XDG base data dir — used if `DOC_HUB_DATA_DIR` is not set |
 | `DOC_HUB_EVAL_DIR` | See below | No | Override eval file directory |
-| `LOGLEVEL` | — | No | Set to `DEBUG` for verbose output from `doc-hub-search` and `doc-hub-eval` |
+| `LOGLEVEL` | — | No | Set to `DEBUG` for verbose output from `doc-hub docs search` and `doc-hub pipeline eval` |
 
 ¹ Either `DOC_HUB_DATABASE_URL` or `PGPASSWORD` must be set. If neither is set, `_build_dsn()` raises `RuntimeError`.
 
@@ -205,10 +205,10 @@ Eval files must be named `{corpus-slug}.json` (e.g., `pydantic-ai.json`). See th
 
 **`LOGLEVEL`**
 
-Set to `DEBUG` to enable verbose output from `doc-hub-search` and `doc-hub-eval`. Pipeline commands (`doc-hub-pipeline`, `doc-hub-sync-all`) always log at `INFO` level regardless of this variable.
+Set to `DEBUG` to enable verbose output from `doc-hub docs search` and `doc-hub pipeline eval`. Pipeline commands continue to log at `INFO` level regardless of this variable.
 
 ```bash
-LOGLEVEL=DEBUG doc-hub-search "how do I define a tool?" --corpus pydantic-ai
+LOGLEVEL=DEBUG doc-hub docs search "how do I define a tool?" --corpus pydantic-ai
 ```
 
 ---

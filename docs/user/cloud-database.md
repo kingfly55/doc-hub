@@ -182,10 +182,10 @@ The Gemini `gemini-embedding-001` embedder produces 768-dimensional vectors; `DO
 
 ```bash
 # Re-index a single corpus
-doc-hub-pipeline --corpus <slug>
+doc-hub pipeline run --corpus <slug>
 
 # Re-index all enabled corpora
-doc-hub-sync-all
+doc-hub pipeline sync-all
 ```
 
 **Recommended migration steps:**
@@ -197,8 +197,8 @@ doc-hub-sync-all
    ```
 3. Run the pipeline — `ensure_schema()` creates the schema on first connect:
    ```bash
-   doc-hub-pipeline --corpus <slug>
+   doc-hub pipeline run --corpus <slug>
    ```
-4. Repeat for remaining corpora, or use `doc-hub-sync-all` to process all at once.
+4. Repeat for remaining corpora, or use `doc-hub pipeline sync-all` to process all at once.
 
 Local data in `data/<slug>/raw/` and `data/<slug>/chunks/` is reused by default. Pass `--clean` to force a full re-fetch from the source.

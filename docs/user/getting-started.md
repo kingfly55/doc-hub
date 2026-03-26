@@ -42,24 +42,16 @@ The CLI scripts are available whenever the virtual environment is active.
 ### Option C: Run without installing
 
 ```bash
-uvx --from git+https://github.com/kingfly55/doc-hub.git doc-hub-search --help
+uvx --from git+https://github.com/kingfly55/doc-hub.git doc-hub --help
 ```
 
 ### Verify installation
 
 ```bash
-doc-hub-search --help
+doc-hub --help
 ```
 
-This confirms all five console scripts are available:
-
-| Script | Description |
-|--------|-------------|
-| `doc-hub-pipeline` | Run the fetch → parse → embed → index pipeline for a corpus |
-| `doc-hub-search` | Hybrid search CLI |
-| `doc-hub-mcp` | Start the MCP server |
-| `doc-hub-eval` | Evaluate retrieval quality |
-| `doc-hub-sync-all` | Run the pipeline for all enabled corpora |
+This confirms the unified CLI is available.
 
 ---
 
@@ -181,7 +173,7 @@ VALUES (
 ## 6. Run the Pipeline
 
 ```bash
-doc-hub-pipeline --corpus pydantic-ai
+doc-hub pipeline run --corpus pydantic-ai
 ```
 
 This runs all four stages in sequence:
@@ -198,23 +190,24 @@ This runs all four stages in sequence:
 ### Running individual stages
 
 ```bash
-doc-hub-pipeline --corpus pydantic-ai --stage fetch
-doc-hub-pipeline --corpus pydantic-ai --stage parse
-doc-hub-pipeline --corpus pydantic-ai --stage embed
-doc-hub-pipeline --corpus pydantic-ai --stage index
+doc-hub pipeline run --corpus pydantic-ai --stage fetch
+doc-hub pipeline run --corpus pydantic-ai --stage parse
+doc-hub pipeline run --corpus pydantic-ai --stage embed
+doc-hub pipeline run --corpus pydantic-ai --stage index
+doc-hub pipeline run --corpus pydantic-ai --stage tree
 ```
 
 ### Other useful flags
 
 ```bash
 # Re-use previously fetched files (skip download)
-doc-hub-pipeline --corpus pydantic-ai --skip-download
+doc-hub pipeline run --corpus pydantic-ai --skip-download
 
 # Delete stale DB rows (chunks no longer in the corpus)
-doc-hub-pipeline --corpus pydantic-ai --full-reindex
+doc-hub pipeline run --corpus pydantic-ai --full-reindex
 
 # Wipe all local data for the corpus first, then re-run
-doc-hub-pipeline --corpus pydantic-ai --clean
+doc-hub pipeline run --corpus pydantic-ai --clean
 ```
 
 ### Expected log output
@@ -240,7 +233,7 @@ The embed stage is the slowest on first run due to Gemini API rate limits. Subse
 ## 7. Run Your First Search
 
 ```bash
-doc-hub-search "how do I define a tool?" --corpus pydantic-ai
+doc-hub docs search "how do I define a tool?" --corpus pydantic-ai
 ```
 
 ### Output format
@@ -275,7 +268,7 @@ Corpus: pydantic-ai
 ### JSON output
 
 ```bash
-doc-hub-search "how do I define a tool?" --corpus pydantic-ai --json
+doc-hub docs search "how do I define a tool?" --corpus pydantic-ai --json
 ```
 
 Returns an array of objects with keys: `id`, `corpus_id`, `heading`, `section_path`, `source_url`, `score`, `similarity`, `category`, `start_line`, `end_line`, `content_preview`.
@@ -284,24 +277,24 @@ Returns an array of objects with keys: `id`, `corpus_id`, `heading`, `section_pa
 
 ```bash
 # Search without corpus filter (all indexed corpora)
-doc-hub-search "retry logic"
+doc-hub docs search "retry logic"
 
 # Filter by category
-doc-hub-search "Agent" --corpus pydantic-ai --category api
+doc-hub docs search "Agent" --corpus pydantic-ai --category api
 
 # Return more results
-doc-hub-search "streaming" --corpus pydantic-ai --limit 10
+doc-hub docs search "streaming" --corpus pydantic-ai --limit 10
 
 # Lower the similarity threshold to get more results
-doc-hub-search "streaming" --corpus pydantic-ai --min-similarity 0.4
+doc-hub docs search "streaming" --corpus pydantic-ai --min-similarity 0.4
 ```
 
 ---
 
 ## 8. Next Steps
 
-- **CLI reference** — full flag documentation for all five console scripts
-- **MCP server setup** — integrate doc-hub with Claude Code or any MCP client via `doc-hub-mcp`
-- **Evaluation** — measure retrieval quality with `doc-hub-eval` using hand-curated test queries
+- **CLI reference** — full flag documentation for the unified `doc-hub` command tree
+- **MCP server setup** — integrate doc-hub with Claude Code or any MCP client via `doc-hub serve mcp`
+- **Evaluation** — measure retrieval quality with `doc-hub pipeline eval` using hand-curated test queries
 - **Custom fetchers** — see `docs/writing-fetchers.md` to index documentation from non-standard sources
 - **Configuration** — see `docs/user/configuration.md` for the full environment variable reference
