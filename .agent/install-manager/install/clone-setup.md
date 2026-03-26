@@ -16,6 +16,7 @@ doc-hub --help
 Expected result:
 - `.venv/` exists
 - `doc-hub --help` prints the unified CLI tree
+- `doc-hub docs man` prints the bundled CLI reference text from the repository checkout
 
 ## Recommended global install
 

@@ -55,6 +55,8 @@ EOF
 
 `doc-hub` loads this file after any repo-local `.env`, so local clone overrides still work.
 
+For installed CLI usage, `doc-hub docs man` does not require DB or Gemini credentials and is the built-in fallback when `man doc-hub` is unavailable because the shell has not picked up the tool-installed manpath yet.
+
 ## Verify env state
 
 ```bash

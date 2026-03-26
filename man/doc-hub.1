@@ -12,14 +12,17 @@ Keep to the top-level command tree and use the examples below as a quick referen
 .B doc-hub docs list
 List registered corpora.
 .TP
-.B doc-hub docs search "QUERY"
-Search a corpus.
+.B doc-hub docs man
+Print the bundled manpage text directly.
+.TP
+.B doc-hub docs search --corpus CORPUS [--corpus CORPUS ...] "QUERY"
+Search one or more corpora.
 .TP
 .B doc-hub docs browse CORPUS
-Open corpus browsing.
+Browse persisted corpus documents and short IDs.
 .TP
-.B doc-hub docs read CORPUS PAGE
-Read a page from a corpus.
+.B doc-hub docs read CORPUS DOC_PATH_OR_ID
+Read a document by path or short document ID.
 .TP
 .B doc-hub pipeline run --corpus CORPUS
 Run the pipeline against a corpus.
@@ -36,11 +39,27 @@ doc-hub docs list
 .fi
 .RE
 .PP
-Search a corpus:
+Show the bundled CLI reference text directly:
 .PP
 .RS
 .nf
-doc-hub docs search "retry logic"
+doc-hub docs man
+.fi
+.RE
+.PP
+Search one corpus:
+.PP
+.RS
+.nf
+doc-hub docs search --corpus pydantic-ai "retry logic"
+.fi
+.RE
+.PP
+Search multiple corpora:
+.PP
+.RS
+.nf
+doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 .fi
 .RE
 .PP
@@ -50,6 +69,7 @@ Browse and read documentation:
 .nf
 doc-hub docs browse pydantic-ai
 doc-hub docs read pydantic-ai agents
+doc-hub docs read pydantic-ai abc123
 .fi
 .RE
 .PP

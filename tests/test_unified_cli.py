@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -66,9 +67,54 @@ def test_docs_search_routes_to_search_handler():
     from doc_hub.cli.main import main
 
     with patch("doc_hub.cli.docs.handle_search") as mock_handler:
-        main(["docs", "search", "retry logic"])
+        main(["docs", "search", "--corpus", "pydantic-ai", "retry logic"])
 
     mock_handler.assert_called_once()
+
+
+def test_docs_man_routes_to_man_handler():
+    from doc_hub.cli.main import main
+
+    with patch("doc_hub.cli.docs.handle_man") as mock_handler:
+        main(["docs", "man"])
+
+    mock_handler.assert_called_once()
+
+
+def test_docs_man_prints_bundled_manpage(capsys):
+    from doc_hub.cli.docs import handle_man
+
+    handle_man(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert "COMMANDS" in out
+    assert "doc-hub docs list" in out
+    assert "doc-hub docs man" in out
+    assert "doc-hub docs search --corpus pydantic-ai \"retry logic\"" in out
+    assert "doc-hub docs read pydantic-ai abc123" in out
+    assert "doc-hub serve mcp" in out
+    assert "SEE ALSO" in out
+    assert "man(1)" in out
+
+
+def test_docs_man_falls_back_to_installed_manpath(capsys, tmp_path):
+    from doc_hub.cli import docs as docs_module
+
+    installed_manpage = tmp_path / "share" / "man" / "man1" / "doc-hub.1"
+    installed_manpage.parent.mkdir(parents=True)
+    installed_manpage.write_text('.TH DOC-HUB 1\n.SH NAME\ndoc-hub - test manpage\n')
+
+    missing_module = tmp_path / "site-packages" / "doc_hub" / "cli" / "docs.py"
+    missing_module.parent.mkdir(parents=True)
+    missing_module.write_text("# test placeholder\n")
+
+    with (
+        patch.object(docs_module, "__file__", str(missing_module)),
+        patch.object(docs_module.sys, "prefix", str(tmp_path)),
+    ):
+        docs_module.handle_man(argparse.Namespace())
+
+    assert "NAME" in capsys.readouterr().out
 
 
 def test_pipeline_eval_routes_to_eval_handler():
@@ -108,6 +154,8 @@ def test_doc_hub_manpage_renders():
 
     assert "doc-hub" in result.stdout
     assert "doc-hub docs list" in result.stdout
+    assert "doc-hub docs man" in result.stdout
+    assert "doc-hub docs search --corpus CORPUS" in result.stdout
 
 
 def test_docs_mention_manpage_and_corpus_listing():

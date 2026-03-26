@@ -6,7 +6,7 @@ The canonical command surface for doc-hub is a single executable:
 doc-hub ...
 ```
 
-For a concise local reference after install, use `man doc-hub`.
+For a concise local reference after install, use `man doc-hub`. If your shell has not picked up the installed manpath yet, use `doc-hub docs man` to print the bundled manpage directly.
 
 The command tree is organized into three groups:
 
@@ -42,6 +42,18 @@ doc-hub docs list --json
 
 ---
 
+## `doc-hub docs man`
+
+Print the bundled manpage text directly.
+
+```bash
+doc-hub docs man
+```
+
+Use this when you want the same concise reference content as `man doc-hub` but your shell environment has not picked up the installed manpath yet.
+
+---
+
 ## `doc-hub docs browse`
 
 Browse the persisted document hierarchy for a corpus.
@@ -61,7 +73,7 @@ doc-hub docs browse CORPUS [options]
 
 ### Output
 
-Human-readable mode prints the corpus slug followed by an indented preorder tree. Group nodes are marked with `[group]`. Concrete documents include total character count and section count.
+Human-readable mode prints the corpus slug followed by an indented preorder tree. Group nodes are marked with `[group]`. Concrete documents include a stable short document ID in brackets plus total character count and section count. Use that short ID with `doc-hub docs read` when you do not want to type the full path.
 
 ### Examples
 
@@ -75,6 +87,10 @@ doc-hub docs browse pydantic-ai --path api
 # Limit subtree depth
 doc-hub docs browse pydantic-ai --path api --depth 1
 
+# Use the short ID shown in browse output with read
+# Example browse line: Install [abc123] 12,345 chars  3 sections
+doc-hub docs read pydantic-ai abc123
+
 # Machine-readable output
 doc-hub docs browse pydantic-ai --json
 ```
@@ -86,7 +102,7 @@ doc-hub docs browse pydantic-ai --json
 Read a document or a specific section from a corpus.
 
 ```bash
-doc-hub docs read CORPUS DOC_PATH [options]
+doc-hub docs read CORPUS DOC_PATH_OR_ID [options]
 ```
 
 ### Flags
@@ -94,7 +110,7 @@ doc-hub docs read CORPUS DOC_PATH [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `corpus` | string | **required** | Corpus slug containing the document. |
-| `doc_path` | string | **required** | Document path to read. |
+| `doc_path` | string | **required** | Document path or short document ID from `doc-hub docs browse`. |
 | `--section SECTION_PATH` | string | none | Restrict output to one section and its descendants. |
 | `--force` | flag | false | Force full content output for large documents. |
 | `--json` | flag | false | Emit the same structured payload shape as the MCP read tool. |
@@ -126,7 +142,7 @@ doc-hub docs read pydantic-ai agents --json
 Hybrid vector + full-text search across indexed documentation.
 
 ```bash
-doc-hub docs search QUERY [options]
+doc-hub docs search --corpus SLUG [--corpus SLUG ...] QUERY [options]
 ```
 
 ### Arguments and flags
@@ -134,7 +150,7 @@ doc-hub docs search QUERY [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `query` | string | **required** | Search query (positional). |
-| `--corpus SLUG` | string | search all | Restrict results to this corpus slug. |
+| `--corpus SLUG` | string (repeatable) | **required** | Restrict results to one or more corpus slugs. Repeat the flag to search multiple corpora. |
 | `--category CATEGORY` | string (repeatable) | no filter | Include only results in this category. Repeatable: `--category api --category guide`. Valid values: `api`, `guide`, `example`, `eval`, `other`. |
 | `--exclude-category CATEGORY` | string (repeatable) | no filter | Exclude results in this category. Repeatable. Same valid values as `--category`. |
 | `--limit N` | int | 5 | Maximum number of results to return. |
@@ -151,17 +167,17 @@ doc-hub docs search QUERY [options]
 ### Examples
 
 ```bash
-# Basic search across all corpora
-doc-hub docs search "how do I handle retries?"
+# Search one corpus
+doc-hub docs search --corpus fastapi "how do I add middleware?"
 
-# Scoped to one corpus
-doc-hub docs search "how do I add middleware?" --corpus fastapi
+# Search multiple corpora
+doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 
 # Filter to API reference only
-doc-hub docs search "Agent" --corpus pydantic-ai --category api --limit 10
+doc-hub docs search --corpus pydantic-ai "Agent" --category api --limit 10
 
 # Machine-readable output
-doc-hub docs search "validators" --corpus pydantic-ai --json
+doc-hub docs search --corpus pydantic-ai "validators" --json
 ```
 
 ---
