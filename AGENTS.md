@@ -36,11 +36,13 @@ pytest tests/ -m integration
 ruff check src/
 
 # CLI entry points
-doc-hub-pipeline --corpus <slug> [--stage fetch|parse|embed|index] [--clean] [--skip-download] [--full-reindex]
-doc-hub-search "<query>" [--corpus <slug>] [--category <cat>] [--limit N]
-doc-hub-mcp          # start MCP server
-doc-hub-eval         # run retrieval eval
-doc-hub-sync-all     # index all enabled corpora
+doc-hub pipeline run --corpus <slug> [--stage fetch|parse|embed|index|tree] [--clean] [--skip-download] [--full-reindex]
+doc-hub docs search "<query>" [--corpus <slug>] [--category <cat>] [--limit N]
+doc-hub docs browse <slug>
+doc-hub docs read <slug> <doc_path>
+doc-hub serve mcp          # start MCP server
+doc-hub pipeline eval      # run retrieval eval
+doc-hub pipeline sync-all  # index all enabled corpora
 ```
 
 pytest config: `asyncio_mode = "auto"` — all async tests run automatically.

@@ -203,14 +203,14 @@ Feature: Incremental sync pipeline
 
   Scenario: Normal pipeline run
     Given a registered corpus
-    When doc-hub-pipeline --corpus <slug> runs
+    When doc-hub pipeline run --corpus <slug> runs
     Then stages execute in order: fetch -> parse -> embed -> index
     And the verify_index smoke test runs after indexing
     And the total chunk count is logged
 
   Scenario: --clean flag
     Given a corpus with existing fetched files and embedding cache
-    When doc-hub-pipeline --corpus <slug> --clean runs
+    When doc-hub pipeline run --corpus <slug> --clean runs
     Then the raw directory is deleted before fetch
     And the chunks directory is deleted before parse
     And the embedding cache is deleted before embed
@@ -218,13 +218,13 @@ Feature: Incremental sync pipeline
 
   Scenario: --full-reindex flag
     Given a corpus with existing data in doc_chunks
-    When doc-hub-pipeline --corpus <slug> --full-reindex runs
+    When doc-hub pipeline run --corpus <slug> --full-reindex runs
     Then the index stage runs with full=True
     And stale rows for this corpus are deleted after upsert
 
   Scenario: --skip-download flag
     Given a corpus with existing fetched files
-    When doc-hub-pipeline --corpus <slug> --skip-download runs
+    When doc-hub pipeline run --corpus <slug> --skip-download runs
     Then the fetch stage is skipped entirely
     And parse/embed/index run on existing files
 

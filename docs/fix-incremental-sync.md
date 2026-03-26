@@ -7,7 +7,7 @@ The doc-hub pipeline's incremental sync has two critical gaps:
 1. **Modified content is missed** — the fetcher diffs by URL only, so if upstream doc content changes without a URL change, the stale local file is never re-downloaded.
 2. **Deleted docs are never cleaned up** — removed URLs are logged but local `.md` files aren't deleted, and the parser globs all `*.md` files regardless of the manifest, so orphaned files get re-indexed indefinitely.
 
-Both gaps mean `doc-hub-pipeline --corpus X` (the normal incremental run) silently serves stale or deleted content. The only workaround today is `--clean` which nukes everything and forces a full re-embed (expensive on free-tier Gemini).
+Both gaps mean `doc-hub pipeline run --corpus X` (the normal incremental run) silently serves stale or deleted content. The only workaround today is `--clean` which nukes everything and forces a full re-embed (expensive on free-tier Gemini).
 
 ## Prior Art
 

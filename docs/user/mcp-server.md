@@ -127,7 +127,7 @@ Use this if the server is already running (e.g. as a systemd service). Claude De
 Pass the MCP config directly when launching Claude Code:
 
 ```bash
-claude --mcp '{"mcpServers":{"doc-hub":{"command":"uv","args":["run","--package","doc-hub","doc-hub serve mcp"]}}}'
+claude --mcp '{"mcpServers":{"doc-hub":{"command":"uv","args":["run","--package","doc-hub","doc-hub","serve","mcp"]}}}'
 ```
 
 ### Using `settings.json`
@@ -170,7 +170,7 @@ For persistent access by any agent on the machine, run the server under systemd 
 ### Unit file
 
 ```bash
-cat > ~/.config/systemd/user/doc-hub-mcp.service << 'EOF'
+cat > ~/.config/systemd/user/doc-hub-serve-mcp.service << 'EOF'
 [Unit]
 Description=doc-hub MCP Server (SSE on :8340)
 After=network.target postgresql.service
@@ -196,14 +196,14 @@ Set the `Environment` lines to your actual credentials. Alternatively, use `Envi
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now doc-hub-mcp.service
+systemctl --user enable --now doc-hub-serve-mcp.service
 ```
 
 ### Check status and logs
 
 ```bash
-systemctl --user status doc-hub-mcp.service
-journalctl --user -u doc-hub-mcp.service -f
+systemctl --user status doc-hub-serve-mcp.service
+journalctl --user -u doc-hub-serve-mcp.service -f
 ```
 
 Once running, connect via `http://localhost:8340/sse`.

@@ -330,11 +330,7 @@ Defined in `pyproject.toml` `[project.scripts]`:
 
 | Command | Entry point | Description |
 |---|---|---|
-| `doc-hub-pipeline` | `doc_hub.pipeline:main` | Run pipeline for a single corpus |
-| `doc-hub-sync-all` | `doc_hub.pipeline:sync_all_main` | Run pipeline for all enabled corpora |
-| `doc-hub-search` | `doc_hub.search:main` | Ad-hoc search from CLI |
-| `doc-hub-mcp` | `doc_hub.mcp_server:main` | Start MCP server (stdio/SSE/streamable-http) |
-| `doc-hub-eval` | `doc_hub.eval:main` | Run retrieval quality evaluation |
+| `doc-hub` | `doc_hub.cli.main:main` | Unified CLI for docs, pipeline, and serve operations |
 
 ---
 

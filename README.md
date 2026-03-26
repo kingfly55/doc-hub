@@ -136,7 +136,7 @@ See [docs/user/mcp-server.md](docs/user/mcp-server.md) for transport details and
 ### Running as a systemd service
 
 ```bash
-cat > ~/.config/systemd/user/doc-hub-mcp.service << 'EOF'
+cat > ~/.config/systemd/user/doc-hub-serve-mcp.service << 'EOF'
 [Unit]
 Description=doc-hub MCP Server (SSE on :8340)
 After=network.target postgresql.service
@@ -156,7 +156,7 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now doc-hub-mcp.service
+systemctl --user enable --now doc-hub-serve-mcp.service
 ```
 
 ## Plugin system
