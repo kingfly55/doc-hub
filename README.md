@@ -10,18 +10,17 @@ The plugin system lets you add new fetchers, parsers, and embedders without modi
 
 ## Install
 
-A global install is **not** required. Install into a virtual environment or as an isolated CLI tool:
+doc-hub is installed from GitHub (not published to PyPI).
 
 ```bash
-# Virtual environment (recommended)
-python -m venv .venv && source .venv/bin/activate
-pip install doc-hub
+# As an isolated CLI tool (recommended — puts doc-hub-* commands on your PATH)
+uv tool install git+https://github.com/kingfly55/doc-hub.git
+# or: pipx install git+https://github.com/kingfly55/doc-hub.git
 
-# Or as an isolated CLI tool (no venv needed)
-pipx install doc-hub   # or: uv tool install doc-hub
-
-# Or run without installing
-uvx --from doc-hub doc-hub-search --help
+# Or from a local clone
+git clone https://github.com/kingfly55/doc-hub.git && cd doc-hub
+uv sync            # creates .venv and installs everything
+source .venv/bin/activate
 ```
 
 Verify:

@@ -15,48 +15,34 @@ This guide walks you from zero to your first successful search query.
 
 ## 2. Install doc-hub
 
-doc-hub does **not** require a global install. Choose whichever method fits your workflow:
+doc-hub is installed from GitHub (not published to PyPI). Choose whichever method fits your workflow:
 
-### Option A: Install into a virtual environment (recommended)
+### Option A: Install as an isolated CLI tool
+
+Puts all `doc-hub-*` commands on your PATH without managing a virtual environment:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install doc-hub
+# Using uv (recommended)
+uv tool install git+https://github.com/kingfly55/doc-hub.git
+
+# Or using pipx
+pipx install git+https://github.com/kingfly55/doc-hub.git
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+### Option B: Install from a local clone (recommended for development)
 
 ```bash
-uv venv && source .venv/bin/activate
-uv pip install doc-hub
+git clone https://github.com/kingfly55/doc-hub.git && cd doc-hub
+uv sync            # creates .venv and installs all dependencies (including dev)
+source .venv/bin/activate
 ```
 
 The CLI scripts are available whenever the virtual environment is active.
 
-### Option B: Install as an isolated CLI tool
-
-If you just want the `doc-hub-*` commands on your PATH without managing a virtual environment:
-
-```bash
-# Using pipx
-pipx install doc-hub
-
-# Or using uv
-uv tool install doc-hub
-```
-
 ### Option C: Run without installing
 
 ```bash
-uvx --from doc-hub doc-hub-search --help
-```
-
-### Option D: Development install (from a local clone)
-
-```bash
-pip install -e .
-# or
-uv pip install -e .
+uvx --from git+https://github.com/kingfly55/doc-hub.git doc-hub-search --help
 ```
 
 ### Verify installation
