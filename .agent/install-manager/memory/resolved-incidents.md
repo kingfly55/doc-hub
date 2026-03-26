@@ -35,3 +35,10 @@ Use this file to record durable operational incidents and their fixes.
 - Fix: no automatic repair was applied here; the issue was surfaced by install-manager diagnostics for operator follow-up
 - Verification: `./.agent/install-manager/scripts/check-mcp.sh` reproduced the service status and log evidence
 - Follow-up: when diagnosing MCP issues, always verify the service unit command path and env source, not just whether the unit is active
+
+### 2026-03-26 — Global doc-hub install and MCP service were normalized to the unified CLI
+- Symptom: this machine had no global `doc-hub` command, the user service still pointed at an older checkout, and the stale pre-unification wrappers had drifted from the supported CLI surface
+- Root cause: the machine install and service wiring predated the unified CLI migration and still depended on repo-local paths and ad-hoc env configuration
+- Fix: installed `doc-hub` globally via `uv tool install --force`, created `/home/joenathan/.local/share/doc-hub/env`, removed the stale wrapper commands from PATH, and rewrote `doc-hub-mcp.service` to call `/home/joenathan/.local/bin/doc-hub serve mcp --transport sse --port 8340` with `EnvironmentFile=/home/joenathan/.local/share/doc-hub/env`
+- Verification: `command -v doc-hub`, `doc-hub --help`, and `systemctl --user status doc-hub-mcp.service --no-pager` all succeeded; service logs showed the repaired process serving on `127.0.0.1:8340`
+- Follow-up: future install guidance should treat `~/.local/share/doc-hub/env` as the durable machine-wide env source for global installs

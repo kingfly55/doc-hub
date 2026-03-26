@@ -30,13 +30,12 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-ExecStart=doc-hub serve mcp --transport sse --port 8340
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/doc-hub serve mcp --transport sse --port 8340
 Restart=always
 RestartSec=10
 Environment=HOME=%h
-Environment=GEMINI_API_KEY=your-key-here
-Environment=PGHOST=localhost
-Environment=PGPASSWORD=your-password
+EnvironmentFile=%h/.local/share/doc-hub/env
 
 [Install]
 WantedBy=default.target

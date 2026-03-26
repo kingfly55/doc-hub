@@ -37,6 +37,24 @@ PGPASSWORD=mysecretpassword
 PGDATABASE=postgres
 ```
 
+## Recommended machine-wide env file
+
+When `doc-hub` is installed on PATH and may be run from outside this repository, keep a durable env file under the doc-hub XDG data directory:
+
+```bash
+mkdir -p ~/.local/share/doc-hub
+cat > ~/.local/share/doc-hub/env <<'EOF'
+PGHOST=localhost
+PGPORT=5433
+PGUSER=postgres
+PGPASSWORD=your-password
+PGDATABASE=postgres
+GEMINI_API_KEY=your-key-here
+EOF
+```
+
+`doc-hub` loads this file after any repo-local `.env`, so local clone overrides still work.
+
 ## Verify env state
 
 ```bash

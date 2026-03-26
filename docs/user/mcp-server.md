@@ -91,17 +91,14 @@ Claude Desktop spawns the server automatically when a session starts. Use this i
 {
   "mcpServers": {
     "doc-hub": {
-      "command": "uv",
-      "args": ["run", "--package", "doc-hub", "doc-hub", "serve", "mcp"],
-      "env": {
-        "GEMINI_API_KEY": "<your-key>"
-      }
+      "command": "doc-hub",
+      "args": ["serve", "mcp"]
     }
   }
 }
 ```
 
-Environment variables in `"env"` are merged with the inherited environment. You only need to include variables that are not already set in your shell. See [Configuration Reference](configuration.md) for all supported variables.
+For a global install, put your database and Gemini settings in `~/.local/share/doc-hub/env` so the spawned command works from anywhere. You only need an explicit `"env"` block here if you want this MCP client to override the shared machine-level defaults. See [Configuration Reference](configuration.md) for all supported variables.
 
 ### SSE (connect to running service)
 
@@ -127,7 +124,7 @@ Use this if the server is already running (e.g. as a systemd service). Claude De
 Pass the MCP config directly when launching Claude Code:
 
 ```bash
-claude --mcp '{"mcpServers":{"doc-hub":{"command":"uv","args":["run","--package","doc-hub","doc-hub","serve","mcp"]}}}'
+claude --mcp '{"mcpServers":{"doc-hub":{"command":"doc-hub","args":["serve","mcp"]}}}'
 ```
 
 ### Using `settings.json`
@@ -138,11 +135,8 @@ Add the server to `.claude/settings.json` in your project or to the global setti
 {
   "mcpServers": {
     "doc-hub": {
-      "command": "uv",
-      "args": ["run", "--package", "doc-hub", "doc-hub", "serve", "mcp"],
-      "env": {
-        "GEMINI_API_KEY": "<your-key>"
-      }
+      "command": "doc-hub",
+      "args": ["serve", "mcp"]
     }
   }
 }
@@ -177,20 +171,19 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-ExecStart=doc-hub serve mcp --transport sse --port 8340
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/doc-hub serve mcp --transport sse --port 8340
 Restart=always
 RestartSec=10
 Environment=HOME=%h
-Environment=GEMINI_API_KEY=your-key-here
-Environment=PGHOST=localhost
-Environment=PGPASSWORD=your-password
+EnvironmentFile=%h/.local/share/doc-hub/env
 
 [Install]
 WantedBy=default.target
 EOF
 ```
 
-Set the `Environment` lines to your actual credentials. Alternatively, use `EnvironmentFile=/path/to/your/.env` to load from a file.
+This assumes `doc-hub` was installed with `uv tool install` and that `~/.local/share/doc-hub/env` contains the required database and Gemini settings.
 
 ### Enable and start
 

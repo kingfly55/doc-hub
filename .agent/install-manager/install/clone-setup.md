@@ -17,6 +17,18 @@ Expected result:
 - `.venv/` exists
 - `doc-hub --help` prints the unified CLI tree
 
+## Recommended global install
+
+If you want `doc-hub` to run from anywhere on the machine, install it as a user tool:
+
+```bash
+uv tool install --force /path/to/doc-hub
+# or
+uv tool install --force git+https://github.com/kingfly55/doc-hub.git
+```
+
+Use `~/.local/share/doc-hub/env` for machine-wide DB and Gemini settings in that mode.
+
 ## If `uv` is unavailable
 
 Install `uv` first or use your team-approved Python environment workflow. The repository is documented around `uv`.

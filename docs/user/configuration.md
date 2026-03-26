@@ -2,7 +2,13 @@
 
 All environment variables recognized by doc-hub, their defaults, and how they interact.
 
-The unified `doc-hub` CLI calls `load_dotenv()` before dispatching commands, so you can place a `.env` file at your repo root or working directory instead of exporting variables into your shell.
+The unified `doc-hub` CLI loads environment in this order before dispatching commands:
+
+1. Existing process environment
+2. `.env` in the current working directory / repo root
+3. A global env file at `~/.local/share/doc-hub/env` (or `{DOC_HUB_DATA_DIR}/env` if you override the data root)
+
+That means explicit shell exports still win, repo-local `.env` files still work for clone-based development, and a global `doc-hub` install can still run from anywhere on the machine.
 
 ---
 
@@ -226,4 +232,20 @@ DOC_HUB_VECTOR_DIM=768
 DOC_HUB_EMBED_SLEEP=65.0
 ```
 
-Variables already in your environment take precedence over `.env` values (standard `python-dotenv` behavior).
+Variables already in your environment take precedence over `.env` values.
+
+For a global install that should work from any directory, create a durable env file under doc-hub's home-directory data root:
+
+```bash
+mkdir -p ~/.local/share/doc-hub
+cat > ~/.local/share/doc-hub/env <<'EOF'
+PGHOST=localhost
+PGPORT=5433
+PGUSER=postgres
+PGPASSWORD=your-password
+PGDATABASE=postgres
+GEMINI_API_KEY=your-key
+EOF
+```
+
+If you set `DOC_HUB_DATA_DIR`, the fallback file becomes `{DOC_HUB_DATA_DIR}/env` instead.

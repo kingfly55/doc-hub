@@ -13,13 +13,15 @@ The plugin system lets you add new fetchers, parsers, and embedders without modi
 doc-hub is installed from GitHub (not published to PyPI).
 
 ```bash
-# As an isolated CLI tool (recommended — puts doc-hub-* commands on your PATH)
-uv tool install git+https://github.com/kingfly55/doc-hub.git
-# or: pipx install git+https://github.com/kingfly55/doc-hub.git
+# Install globally from GitHub (recommended)
+uv tool install --force git+https://github.com/kingfly55/doc-hub.git
 
-# Or from a local clone
+# Or install globally from a local clone while developing
+uv tool install --force /path/to/doc-hub
+
+# Or run from a local clone without a global install
 git clone https://github.com/kingfly55/doc-hub.git && cd doc-hub
-uv sync            # creates .venv and installs everything
+uv sync
 source .venv/bin/activate
 ```
 
@@ -28,6 +30,8 @@ Verify:
 ```bash
 doc-hub --help
 ```
+
+The supported command surface is the unified `doc-hub` CLI. Older pre-unification wrappers such as `doc-hub-search`, `doc-hub-pipeline`, `doc-hub-eval`, `doc-hub-sync-all`, and `doc-hub-mcp` should not remain on your PATH.
 
 ## Requirements
 
@@ -48,17 +52,33 @@ docker run -d --name vchord-postgres \
 
 ### 2. Set environment variables
 
+For a global `doc-hub` install, the most durable setup is a machine-wide env file under doc-hub's XDG data directory:
+
 ```bash
-export GEMINI_API_KEY="your-key-here"
-export PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=mypassword PGDATABASE=postgres
+mkdir -p ~/.local/share/doc-hub
+cat > ~/.local/share/doc-hub/env <<'EOF'
+PGHOST=localhost
+PGPORT=5433
+PGUSER=postgres
+PGPASSWORD=mypassword
+PGDATABASE=postgres
+GEMINI_API_KEY=your-key-here
+EOF
 ```
 
-Or create a `.env` file in your working directory — doc-hub uses `python-dotenv` and will auto-load it.
+You can still export values directly in your shell:
+
+```bash
+export GEMINI_API_KEY="your-key-here"
+export PGHOST=localhost PGPORT=5433 PGUSER=postgres PGPASSWORD=mypassword PGDATABASE=postgres
+```
+
+Or create a `.env` file in your working directory — doc-hub uses `python-dotenv` and will auto-load it before falling back to the global env file.
 
 You can also set a single connection string:
 
 ```bash
-export DOC_HUB_DATABASE_URL="postgresql://postgres:mypassword@localhost:5432/postgres"
+export DOC_HUB_DATABASE_URL="postgresql://postgres:mypassword@localhost:5433/postgres"
 ```
 
 ### 3. Index your first corpus
@@ -143,13 +163,12 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
-ExecStart=doc-hub serve mcp --transport sse --port 8340
+WorkingDirectory=%h
+ExecStart=%h/.local/bin/doc-hub serve mcp --transport sse --port 8340
 Restart=always
 RestartSec=10
 Environment=HOME=%h
-Environment=GEMINI_API_KEY=your-key-here
-Environment=PGHOST=localhost
-Environment=PGPASSWORD=mypassword
+EnvironmentFile=%h/.local/share/doc-hub/env
 
 [Install]
 WantedBy=default.target

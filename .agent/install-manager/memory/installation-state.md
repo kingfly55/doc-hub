@@ -34,3 +34,12 @@ Use this file to track the current installed shape of a doc-hub deployment.
 - DB connection mode used for verification: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`
 - MCP mode observed on this machine: systemd-managed SSE service exists outside this repo and appears to point at an older external install path
 - Notes: this file should be updated after any fresh installation or deployment repair
+
+### 2026-03-26
+- Install root: /home/joenathan/.local/share/uv/tools/doc-hub
+- Invocation model: user-level global install via `uv tool install --force ...` with `doc-hub` on `~/.local/bin`
+- Canonical CLI: `doc-hub`
+- Database target used for verification: local VectorChord PostgreSQL on `localhost:5433`
+- DB connection mode used for verification: durable machine-wide env file at `/home/joenathan/.local/share/doc-hub/env`
+- MCP mode observed on this machine: user systemd SSE service at `doc-hub-mcp.service` using `/home/joenathan/.local/bin/doc-hub serve mcp --transport sse --port 8340`
+- Notes: CLI bootstrap also falls back to `/home/joenathan/.local/share/doc-hub/env` when no repo-local `.env` is present
