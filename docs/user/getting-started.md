@@ -15,14 +15,48 @@ This guide walks you from zero to your first successful search query.
 
 ## 2. Install doc-hub
 
+doc-hub does **not** require a global install. Choose whichever method fits your workflow:
+
+### Option A: Install into a virtual environment (recommended)
+
 ```bash
+python -m venv .venv && source .venv/bin/activate
 pip install doc-hub
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
+uv venv && source .venv/bin/activate
 uv pip install doc-hub
+```
+
+The CLI scripts are available whenever the virtual environment is active.
+
+### Option B: Install as an isolated CLI tool
+
+If you just want the `doc-hub-*` commands on your PATH without managing a virtual environment:
+
+```bash
+# Using pipx
+pipx install doc-hub
+
+# Or using uv
+uv tool install doc-hub
+```
+
+### Option C: Run without installing
+
+```bash
+uvx --from doc-hub doc-hub-search --help
+```
+
+### Option D: Development install (from a local clone)
+
+```bash
+pip install -e .
+# or
+uv pip install -e .
 ```
 
 ### Verify installation

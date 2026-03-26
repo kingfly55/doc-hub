@@ -10,14 +10,18 @@ The plugin system lets you add new fetchers, parsers, and embedders without modi
 
 ## Install
 
+A global install is **not** required. Install into a virtual environment or as an isolated CLI tool:
+
 ```bash
+# Virtual environment (recommended)
+python -m venv .venv && source .venv/bin/activate
 pip install doc-hub
-```
 
-Or with [uv](https://docs.astral.sh/uv/):
+# Or as an isolated CLI tool (no venv needed)
+pipx install doc-hub   # or: uv tool install doc-hub
 
-```bash
-uv pip install doc-hub
+# Or run without installing
+uvx --from doc-hub doc-hub-search --help
 ```
 
 Verify:
