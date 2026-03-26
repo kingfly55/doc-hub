@@ -174,6 +174,9 @@ class TestTestQuery:
         assert q.min_similarity == 0.55
         assert q.notes == ""
 
+    def test_not_collected_as_pytest_test_class(self):
+        assert getattr(TestQuery, "__test__", True) is False
+
     def test_custom_fields(self):
         q = TestQuery(
             id="q002",

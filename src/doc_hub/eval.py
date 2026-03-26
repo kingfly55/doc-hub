@@ -112,6 +112,8 @@ def list_eval_corpora() -> list[str]:
 class TestQuery:
     """A single test case with an expected result set."""
 
+    __test__ = False
+
     id: str
     query: str
     expected_headings: list[str] = field(default_factory=list)
