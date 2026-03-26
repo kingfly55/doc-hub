@@ -1,0 +1,226 @@
+[
+  {
+    "id": "q001",
+    "query": "how do I define a tool that accepts parameters?",
+    "expected_headings": ["Defining Tools", "Tool Parameters", "Function Tools", "Tools"],
+    "expected_section_paths": ["Tools", "tools"],
+    "min_similarity": 0.55,
+    "notes": "Should return content from the tools guide about defining function tools with parameters"
+  },
+  {
+    "id": "q002",
+    "query": "what is RunContext and what fields does it have?",
+    "expected_headings": ["RunContext", "Run Context", "Context"],
+    "expected_section_paths": ["RunContext", "run_context", "Tools > Context"],
+    "min_similarity": 0.55,
+    "notes": "API reference lookup for the RunContext class"
+  },
+  {
+    "id": "q003",
+    "query": "how do I stream output from an agent?",
+    "expected_headings": ["Streaming", "Stream", "Streamed Responses", "Stream Text"],
+    "expected_section_paths": ["Streaming", "stream", "streamed"],
+    "min_similarity": 0.55,
+    "notes": "How-to: streaming output from agents"
+  },
+  {
+    "id": "q004",
+    "query": "how do I handle tool errors and retries?",
+    "expected_headings": ["Tool Errors", "Retries", "ModelRetry", "Error Handling", "Handling Errors"],
+    "expected_section_paths": ["Tools", "Retries", "ModelRetry"],
+    "min_similarity": 0.55,
+    "notes": "How-to: handling errors in tools, ModelRetry exception"
+  },
+  {
+    "id": "q005",
+    "query": "ModelRetry exception",
+    "expected_headings": ["ModelRetry", "Retries", "Tool Retries"],
+    "expected_section_paths": ["ModelRetry", "Retries", "tools"],
+    "min_similarity": 0.50,
+    "notes": "Exact symbol lookup for ModelRetry"
+  },
+  {
+    "id": "q006",
+    "query": "how do I test my pydantic ai agent?",
+    "expected_headings": ["Testing", "Unit Testing", "Test", "Pytest"],
+    "expected_section_paths": ["Testing", "testing"],
+    "min_similarity": 0.55,
+    "notes": "Cross-cutting concern: testing agents"
+  },
+  {
+    "id": "q007",
+    "query": "what are the arguments to the Agent constructor?",
+    "expected_headings": ["Agent", "Creating an Agent", "Agent Constructor", "Agent Class"],
+    "expected_section_paths": ["Agent", "agent"],
+    "min_similarity": 0.55,
+    "notes": "API reference: Agent constructor arguments"
+  },
+  {
+    "id": "q008",
+    "query": "how do I use a system prompt?",
+    "expected_headings": ["System Prompts", "System Prompt", "Static System Prompts", "Dynamic System Prompts"],
+    "expected_section_paths": ["System Prompts", "system_prompt", "system-prompts"],
+    "min_similarity": 0.55,
+    "notes": "How-to: configuring system prompts"
+  },
+  {
+    "id": "q009",
+    "query": "what is the difference between sync and async agent runs?",
+    "expected_headings": ["Running Agents", "Sync", "Async", "Run", "Agent Runs"],
+    "expected_section_paths": ["Running Agents", "run", "async"],
+    "min_similarity": 0.50,
+    "notes": "Conceptual: sync vs async agent execution"
+  },
+  {
+    "id": "q010",
+    "query": "output_type parameter for structured responses",
+    "expected_headings": ["Output Type", "Structured Output", "output_type", "Result Types"],
+    "expected_section_paths": ["output_type", "Output", "Structured", "result-type"],
+    "min_similarity": 0.50,
+    "notes": "Exact symbol lookup: output_type / result_type for structured outputs"
+  },
+  {
+    "id": "q011",
+    "query": "how do I configure model settings like temperature and max tokens?",
+    "expected_headings": ["Model Settings", "ModelSettings", "Settings", "Configuration"],
+    "expected_section_paths": ["ModelSettings", "model_settings", "Configuration"],
+    "min_similarity": 0.50,
+    "notes": "API reference: ModelSettings and configuration"
+  },
+  {
+    "id": "q012",
+    "query": "how do I use OpenAI models with pydantic ai?",
+    "expected_headings": ["OpenAI", "OpenAI Models", "Models", "OpenAI Provider"],
+    "expected_section_paths": ["OpenAI", "openai", "Models"],
+    "min_similarity": 0.55,
+    "notes": "How-to: using OpenAI as the LLM provider"
+  },
+  {
+    "id": "q013",
+    "query": "how do I use Google Gemini with pydantic ai?",
+    "expected_headings": ["Gemini", "Google", "Google Models", "Gemini Models"],
+    "expected_section_paths": ["Gemini", "gemini", "Google", "google"],
+    "min_similarity": 0.55,
+    "notes": "How-to: using Google Gemini as the LLM provider"
+  },
+  {
+    "id": "q014",
+    "query": "how do I use dependency injection with agents?",
+    "expected_headings": ["Dependencies", "Dependency Injection", "Deps", "RunContext"],
+    "expected_section_paths": ["Dependencies", "dependencies", "deps"],
+    "min_similarity": 0.55,
+    "notes": "How-to: injecting dependencies into agents and tools"
+  },
+  {
+    "id": "q015",
+    "query": "how do I validate structured output with Pydantic models?",
+    "expected_headings": ["Structured Output", "Output Validation", "Pydantic Model", "Output Types"],
+    "expected_section_paths": ["Structured", "Output", "output_type", "result"],
+    "min_similarity": 0.50,
+    "notes": "How-to: using Pydantic models as structured output schemas"
+  },
+  {
+    "id": "q016",
+    "query": "message history and conversation context",
+    "expected_headings": ["Message History", "Conversation History", "Messages", "History"],
+    "expected_section_paths": ["message_history", "Messages", "History", "conversation"],
+    "min_similarity": 0.50,
+    "notes": "How-to: managing conversation history across multiple agent runs"
+  },
+  {
+    "id": "q017",
+    "query": "how do I use the TestModel for mocking LLM responses?",
+    "expected_headings": ["TestModel", "Test Model", "Mocking", "Testing"],
+    "expected_section_paths": ["TestModel", "test_model", "Testing"],
+    "min_similarity": 0.50,
+    "notes": "Cross-cutting concern: testing with mock models"
+  },
+  {
+    "id": "q018",
+    "query": "how do I set up an agent with multiple tools?",
+    "expected_headings": ["Tools", "Multiple Tools", "Tool Definition", "Function Tools"],
+    "expected_section_paths": ["Tools", "tools", "tool"],
+    "min_similarity": 0.55,
+    "notes": "How-to: defining multiple tools on an agent"
+  },
+  {
+    "id": "q019",
+    "query": "tool_retry_count and retry limit configuration",
+    "expected_headings": ["Retries", "Retry", "tool_retry_count", "Tool Retries"],
+    "expected_section_paths": ["tool_retry_count", "Retries", "tools"],
+    "min_similarity": 0.45,
+    "notes": "Exact symbol lookup: retry count configuration"
+  },
+  {
+    "id": "q020",
+    "query": "how do I handle multi-turn conversations?",
+    "expected_headings": ["Multi-turn", "Conversation", "Message History", "Multiple Turns"],
+    "expected_section_paths": ["conversation", "History", "message_history", "multi"],
+    "min_similarity": 0.50,
+    "notes": "Conceptual: multi-turn conversation handling"
+  },
+  {
+    "id": "q021",
+    "query": "how do I add observability and logging to agents?",
+    "expected_headings": ["Logging", "Observability", "Debugging", "Tracing", "Logfire"],
+    "expected_section_paths": ["Logging", "Observability", "Logfire", "logfire", "debugging"],
+    "min_similarity": 0.50,
+    "notes": "Cross-cutting concern: observability and logging"
+  },
+  {
+    "id": "q022",
+    "query": "how do I use Anthropic Claude with pydantic ai?",
+    "expected_headings": ["Anthropic", "Claude", "Anthropic Models"],
+    "expected_section_paths": ["Anthropic", "anthropic", "claude"],
+    "min_similarity": 0.55,
+    "notes": "How-to: using Anthropic Claude as the LLM provider"
+  },
+  {
+    "id": "q023",
+    "query": "how does result validation work in pydantic ai?",
+    "expected_headings": ["Result Validation", "Output Validation", "Validation", "Result Validators"],
+    "expected_section_paths": ["Validation", "result", "Output", "validator"],
+    "min_similarity": 0.50,
+    "notes": "Conceptual: how structured outputs are validated"
+  },
+  {
+    "id": "q024",
+    "query": "install pydantic ai and getting started",
+    "expected_headings": ["Installation", "Getting Started", "Install", "Quickstart", "Introduction"],
+    "expected_section_paths": ["Installation", "install", "Getting Started", "introduction"],
+    "min_similarity": 0.50,
+    "notes": "How-to: initial setup and installation"
+  },
+  {
+    "id": "q025",
+    "query": "how do I use type annotations for tool return values?",
+    "expected_headings": ["Tools", "Tool Return Types", "Type Annotations", "Function Tools"],
+    "expected_section_paths": ["Tools", "tools", "Return"],
+    "min_similarity": 0.50,
+    "notes": "API reference: type annotations for tool return values"
+  },
+  {
+    "id": "q026",
+    "query": "how do I create a custom model provider?",
+    "expected_headings": ["Custom Models", "Model Interface", "Implementing Models", "Custom Provider"],
+    "expected_section_paths": ["Custom", "Model", "models", "provider"],
+    "min_similarity": 0.45,
+    "notes": "How-to: implementing a custom LLM provider"
+  },
+  {
+    "id": "q027",
+    "query": "how do I use function tools vs plain tools?",
+    "expected_headings": ["Function Tools", "Tools", "Plain Tools", "Tool Types"],
+    "expected_section_paths": ["Tools", "tools", "Function"],
+    "min_similarity": 0.50,
+    "notes": "Conceptual: different tool types in pydantic ai"
+  },
+  {
+    "id": "q028",
+    "query": "what is the Agent class and how do I instantiate it?",
+    "expected_headings": ["Agent", "Creating an Agent", "Agent Class"],
+    "expected_section_paths": ["Agent", "agent", "Getting Started"],
+    "min_similarity": 0.55,
+    "notes": "API reference: Agent class instantiation"
+  }
+]

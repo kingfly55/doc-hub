@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+
+# Environment variables
+.env
+
+# Editor
+.idea/
+.vscode/
+*.sw?
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+
+# Pipeline logs
+.pipeline-logs/

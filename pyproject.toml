@@ -1,0 +1,51 @@
+[project]
+name = "doc-hub"
+version = "0.1.0"
+description = "Multi-corpus documentation search engine"
+requires-python = ">=3.11"
+dependencies = [
+    "asyncpg>=0.29",
+    "google-genai>=1.0",
+    "numpy>=2.0",
+    "aiohttp>=3.9",
+    "pgvector>=0.3",
+    "python-dotenv>=1.0",
+    "mcp>=1.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doc_hub"]
+
+[project.scripts]
+doc-hub-pipeline  = "doc_hub.pipeline:main"
+doc-hub-search    = "doc_hub.search:main"
+doc-hub-mcp       = "doc_hub.mcp_server:main"
+doc-hub-eval      = "doc_hub.eval:main"
+doc-hub-sync-all  = "doc_hub.pipeline:sync_all_main"
+
+[project.entry-points."doc_hub.fetchers"]
+llms_txt = "doc_hub._builtins.fetchers.llms_txt:LlmsTxtFetcher"
+local_dir = "doc_hub._builtins.fetchers.local_dir:LocalDirFetcher"
+sitemap = "doc_hub._builtins.fetchers.sitemap:SitemapFetcher"
+git_repo = "doc_hub._builtins.fetchers.git_repo:GitRepoFetcher"
+
+[project.entry-points."doc_hub.parsers"]
+markdown = "doc_hub._builtins.parsers.markdown:MarkdownParser"
+
+[project.entry-points."doc_hub.embedders"]
+gemini = "doc_hub._builtins.embedders.gemini:GeminiEmbedder"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["integration: requires live DB and GEMINI_API_KEY"]
