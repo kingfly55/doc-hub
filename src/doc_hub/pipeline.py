@@ -1,14 +1,14 @@
 """Pipeline orchestration for doc-hub.
 
 Coordinates the full docs pipeline:
-    fetch → parse → embed → index
+    fetch → parse → embed → index → tree
 
 Each stage is independently executable via ``--stage``. Running without
 ``--stage`` executes all stages in order.
 
 CLI flags ported from ``pydantic_ai_docs/pipeline.py``:
     --corpus           Corpus slug (required)
-    --stage            Run only this stage: fetch|parse|embed|index
+    --stage            Run only this stage: fetch|parse|embed|index|tree
     --clean            Wipe all local data for the corpus first
     --skip-download    Re-use existing raw/ directory (alias: --skip-fetch)
     --full-reindex     Delete stale DB rows after upsert
@@ -19,6 +19,7 @@ CLI flags ported from ``pydantic_ai_docs/pipeline.py``:
 Example usage:
     doc-hub-pipeline --corpus pydantic-ai
     doc-hub-pipeline --corpus pydantic-ai --stage fetch
+    doc-hub-pipeline --corpus pydantic-ai --stage tree
     doc-hub-pipeline --corpus pydantic-ai --clean
     doc-hub-pipeline --corpus pydantic-ai --skip-download
 """
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import shutil
 import time
@@ -275,6 +277,66 @@ async def run_index(
             await pool.close()
 
 
+async def run_build_tree(
+    corpus: Corpus,
+    *,
+    pool: asyncpg.Pool | None = None,
+) -> dict[str, int]:
+    """Build and persist the document hierarchy tree for a corpus."""
+    from doc_hub.db import create_pool, ensure_schema  # noqa: PLC0415
+    from doc_hub.documents import (  # noqa: PLC0415
+        build_document_tree,
+        delete_stale_documents,
+        link_chunks_to_documents,
+        upsert_documents,
+    )
+    from doc_hub.parse import Chunk  # noqa: PLC0415
+
+    zero_result = {"documents": 0, "linked_chunks": 0, "deleted": 0}
+    chunks_path = chunks_dir(corpus) / "chunks.jsonl"
+    if not chunks_path.exists():
+        return zero_result
+
+    chunks: list[Chunk] = []
+    with chunks_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                chunks.append(Chunk(**json.loads(line)))
+
+    manifest_sections: list[dict] | None = None
+    manifest_path = raw_dir(corpus) / "manifest.json"
+    if manifest_path.exists():
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_sections = manifest_data.get("sections")
+
+    tree = build_document_tree(chunks, manifest_sections=manifest_sections)
+    if not tree:
+        return zero_result
+
+    _own_pool = pool is None
+    if _own_pool:
+        pool = await create_pool()
+
+    try:
+        await ensure_schema(pool)
+        path_to_id = await upsert_documents(pool, corpus.slug, tree)
+        linked_chunks = await link_chunks_to_documents(pool, corpus.slug, path_to_id)
+        deleted = await delete_stale_documents(
+            pool,
+            corpus.slug,
+            [node.doc_path for node in tree],
+        )
+        return {
+            "documents": len(path_to_id),
+            "linked_chunks": linked_chunks,
+            "deleted": deleted,
+        }
+    finally:
+        if _own_pool:
+            await pool.close()
+
+
 # ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
@@ -298,7 +360,7 @@ async def run_pipeline(
 
     Args:
         corpus:         The corpus to process.
-        stage:          If set, run only this stage (fetch|parse|embed|index).
+        stage:          If set, run only this stage (fetch|parse|embed|index|tree).
         clean:          Wipe all local data for the corpus before starting.
         skip_download:  Skip the fetch step (re-use existing raw/).
         full_reindex:   Delete stale DB rows after upsert (long-form flag).
@@ -314,7 +376,7 @@ async def run_pipeline(
 
     Returns:
         :class:`~doc_hub.index.IndexResult` when the index stage runs, or
-        ``None`` when only fetch/parse/embed stages are executed.
+        ``None`` when running only fetch/parse/embed/tree stages.
     """
     pipeline_start = time.time()
 
@@ -379,9 +441,17 @@ async def run_pipeline(
             _log_elapsed(corpus, pipeline_start)
             return result
 
-    if stage is not None and stage not in ("fetch", "parse", "embed", "index"):
+    if stage == "tree":
+        await run_build_tree(corpus, pool=pool)
+        _log_elapsed(corpus, pipeline_start)
+        return None
+
+    if stage is None:
+        await run_build_tree(corpus, pool=pool)
+
+    if stage is not None and stage not in ("fetch", "parse", "embed", "index", "tree"):
         raise ValueError(
-            f"Unknown stage: {stage!r}. Valid stages: fetch, parse, embed, index"
+            f"Unknown stage: {stage!r}. Valid stages: fetch, parse, embed, index, tree"
         )
 
     _log_elapsed(corpus, pipeline_start)
@@ -401,12 +471,13 @@ def _log_elapsed(corpus: Corpus, start: float) -> None:
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="doc-hub pipeline: fetch → parse → embed → index",
+        description="doc-hub pipeline: fetch → parse → embed → index → tree",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   doc-hub-pipeline --corpus pydantic-ai
   doc-hub-pipeline --corpus pydantic-ai --stage fetch
+  doc-hub-pipeline --corpus pydantic-ai --stage tree
   doc-hub-pipeline --corpus pydantic-ai --clean
   doc-hub-pipeline --corpus pydantic-ai --skip-download --stage embed
 """,
@@ -420,7 +491,7 @@ Examples:
     )
     parser.add_argument(
         "--stage",
-        choices=["fetch", "parse", "embed", "index"],
+        choices=["fetch", "parse", "embed", "index", "tree"],
         default=None,
         help="Run only this stage (default: run all stages)",
     )

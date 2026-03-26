@@ -99,7 +99,11 @@ def compute_manifest_diff(
     return new_urls, removed
 
 
-def write_manifest(results: list[DownloadResult], output_dir: Path) -> None:
+def write_manifest(
+    results: list[DownloadResult],
+    output_dir: Path,
+    sections: list[dict[str, Any]] | None = None,
+) -> None:
     """Write a JSON manifest of download results to ``output_dir/manifest.json``."""
     manifest = {
         "total": len(results),
@@ -116,6 +120,8 @@ def write_manifest(results: list[DownloadResult], output_dir: Path) -> None:
             for r in sorted(results, key=lambda r: r.filename)
         ],
     }
+    if sections is not None:
+        manifest["sections"] = sections
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     log.info("Manifest written to %s", manifest_path)
@@ -207,6 +213,48 @@ def _derive_url_pattern(base_url: str) -> str:
     return escaped + r"/[^\s\)]+\.md"
 
 
+def _parse_sections(llms_txt_content: str, url_pattern: str) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    current_section: dict[str, Any] | None = None
+    root_urls: list[str] = []
+    root_seen: set[str] = set()
+
+    for line in llms_txt_content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("##"):
+            hashes, _, title = stripped.partition(" ")
+            current_section = {
+                "title": title.strip(),
+                "heading_level": len(hashes),
+                "urls": [],
+            }
+            sections.append(current_section)
+            continue
+        if stripped.startswith("#"):
+            continue
+
+        matches = re.findall(url_pattern, line)
+        if not matches:
+            continue
+
+        if current_section is None:
+            for url in matches:
+                if url not in root_seen:
+                    root_seen.add(url)
+                    root_urls.append(url)
+            continue
+
+        seen_urls = set(current_section["urls"])
+        for url in matches:
+            if url not in seen_urls:
+                current_section["urls"].append(url)
+                seen_urls.add(url)
+
+    if root_urls:
+        sections.insert(0, {"title": "", "heading_level": 0, "urls": root_urls})
+    return sections
+
+
 # ---------------------------------------------------------------------------
 # LlmsTxtFetcher class
 # ---------------------------------------------------------------------------
@@ -267,6 +315,7 @@ class LlmsTxtFetcher:
         (output_dir / "_llms.txt").write_text(llms_txt_content)
 
         # 2. Extract doc URLs using the configured regex pattern
+        sections = _parse_sections(llms_txt_content, url_pattern)
         upstream_urls = re.findall(url_pattern, llms_txt_content)
         # Deduplicate while preserving order
         seen: set[str] = set()
@@ -324,6 +373,6 @@ class LlmsTxtFetcher:
         )
 
         # 7. Write updated manifest with content hashes
-        write_manifest(download_results, output_dir)
+        write_manifest(download_results, output_dir, sections=sections)
 
         return output_dir

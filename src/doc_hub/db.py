@@ -57,6 +57,54 @@ CREATE TABLE IF NOT EXISTS doc_index_meta (
 )
 """
 
+_DOCUMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS doc_documents (
+    id serial PRIMARY KEY,
+    corpus_id text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    doc_path text NOT NULL,
+    title text NOT NULL,
+    source_url text NOT NULL DEFAULT '',
+    source_file text NOT NULL DEFAULT '',
+    parent_id int REFERENCES doc_documents(id) ON DELETE SET NULL,
+    depth smallint NOT NULL DEFAULT 0,
+    sort_order int NOT NULL DEFAULT 0,
+    is_group boolean NOT NULL DEFAULT false,
+    total_chars int NOT NULL DEFAULT 0,
+    section_count int NOT NULL DEFAULT 0,
+    UNIQUE (corpus_id, doc_path)
+)
+"""
+
+_DOCUMENTS_INDEXES_DDL = """
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_id_idx
+    ON doc_documents (corpus_id);
+
+CREATE INDEX IF NOT EXISTS doc_documents_parent_id_idx
+    ON doc_documents (parent_id);
+
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_sort_order_idx
+    ON doc_documents (corpus_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_path_idx
+    ON doc_documents (corpus_id, doc_path text_pattern_ops);
+"""
+
+_CHUNKS_DOCUMENT_ID_DDL = """
+ALTER TABLE doc_chunks ADD COLUMN IF NOT EXISTS document_id int REFERENCES doc_documents(id) ON DELETE SET NULL
+"""
+
+_CHUNKS_DOCUMENT_ID_INDEX = """
+CREATE INDEX IF NOT EXISTS doc_chunks_document_id_idx ON doc_chunks (document_id)
+"""
+
+_LEGACY_CORPORA_PARSER_DDL = """
+ALTER TABLE doc_corpora ADD COLUMN IF NOT EXISTS parser text NOT NULL DEFAULT 'markdown'
+"""
+
+_LEGACY_CORPORA_EMBEDDER_DDL = """
+ALTER TABLE doc_corpora ADD COLUMN IF NOT EXISTS embedder text NOT NULL DEFAULT 'gemini'
+"""
+
 # Indexes — all idempotent via IF NOT EXISTS.
 # Notes:
 # - GIN indexes do NOT support composite (corpus_id, tsv) keys. Use a GIN on
@@ -218,6 +266,44 @@ async def create_pool(dsn: str | None = None) -> asyncpg.Pool:
     return pool
 
 
+async def _migrate_legacy_corpora_schema(conn: asyncpg.Connection) -> None:
+    parser_exists = await conn.fetchval(
+        """
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'doc_corpora'::regclass
+          AND attname = 'parser'
+          AND NOT attisdropped
+        """
+    )
+    if not parser_exists:
+        await conn.execute(_LEGACY_CORPORA_PARSER_DDL)
+
+    embedder_exists = await conn.fetchval(
+        """
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'doc_corpora'::regclass
+          AND attname = 'embedder'
+          AND NOT attisdropped
+        """
+    )
+    if not embedder_exists:
+        await conn.execute(_LEGACY_CORPORA_EMBEDDER_DDL)
+
+    check_name = await conn.fetchval(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'doc_corpora'::regclass
+          AND contype = 'c'
+          AND conname = 'doc_corpora_fetch_strategy_check'
+        """
+    )
+    if check_name:
+        await conn.execute(f"ALTER TABLE doc_corpora DROP CONSTRAINT IF EXISTS {check_name}")
+
+
 # ---------------------------------------------------------------------------
 # Schema creation
 # ---------------------------------------------------------------------------
@@ -241,6 +327,8 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         await conn.execute(_CORPORA_DDL)
         log.debug("doc_corpora table ensured.")
+        await _migrate_legacy_corpora_schema(conn)
+        log.debug("legacy doc_corpora schema migrated if needed.")
 
         await conn.execute(_chunks_ddl())
         log.debug("doc_chunks table ensured.")
@@ -273,11 +361,25 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute(_META_DDL)
         log.debug("doc_index_meta table ensured.")
 
+        await conn.execute(_DOCUMENTS_DDL)
+        log.debug("doc_documents table ensured.")
+
+        await conn.execute(_CHUNKS_DOCUMENT_ID_DDL)
+        log.debug("doc_chunks.document_id column ensured.")
+
         for stmt in _INDEXES_DDL.strip().split("\n\n"):
             stmt = stmt.strip()
             if stmt:
                 await conn.execute(stmt)
-        log.debug("Indexes ensured.")
+
+        for stmt in _DOCUMENTS_INDEXES_DDL.strip().split("\n\n"):
+            stmt = stmt.strip()
+            if stmt:
+                await conn.execute(stmt)
+        log.debug("doc_documents indexes ensured.")
+
+        await conn.execute(_CHUNKS_DOCUMENT_ID_INDEX)
+        log.debug("doc_chunks.document_id index ensured.")
 
     log.info("doc-hub schema verified / created.")
 

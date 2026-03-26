@@ -1,6 +1,6 @@
 # MCP Server
 
-doc-hub exposes four tools to LLM agents via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) using [FastMCP](https://github.com/jlowin/fastmcp). The server manages a shared PostgreSQL connection pool across all tool invocations and supports three transport modes.
+doc-hub exposes six tools to LLM agents via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) using [FastMCP](https://github.com/jlowin/fastmcp). The server manages a shared PostgreSQL connection pool across all tool invocations and supports three transport modes.
 
 ---
 
@@ -13,7 +13,9 @@ The MCP server (`mcp_server.py`) exposes these tools:
 | `search_docs_tool` | Hybrid vector + full-text search across indexed documentation |
 | `list_corpora_tool` | List all registered corpora with status |
 | `add_corpus_tool` | Register a new corpus or update an existing one |
-| `refresh_corpus_tool` | Re-run the full fetch → parse → embed → index pipeline for a corpus |
+| `refresh_corpus_tool` | Re-run the full fetch → parse → embed → index → tree pipeline for a corpus |
+| `browse_corpus_tool` | Browse the persisted document hierarchy for a corpus |
+| `get_document_tool` | Read a document or section, with outline mode for large documents |
 
 On startup, the server creates an asyncpg connection pool and runs `ensure_schema()` to verify the database schema. On shutdown, the pool is closed. The `GEMINI_API_KEY` is checked lazily — the server starts and serves `search_docs_tool`, `list_corpora_tool`, and `add_corpus_tool` requests without it. The key is only required when a search query or corpus refresh triggers an embedding call.
 
@@ -320,7 +322,7 @@ If a corpus with the given `slug` already exists, it is updated (upserted) with 
 
 ### `refresh_corpus_tool`
 
-Re-run the full pipeline for a corpus: fetch → parse → embed → index.
+Re-run the full pipeline for a corpus: fetch → parse → embed → index → tree.
 
 **Parameters:**
 
@@ -356,4 +358,43 @@ On failure:
 
 The tool checks that the corpus exists and is enabled before running the pipeline. If the corpus is disabled, it returns an error dict rather than throwing. To re-enable a disabled corpus, use `add_corpus_tool` to upsert it with the desired configuration (the `Corpus` model defaults `enabled` to `True`).
 
-When `full=False` (the default), the index stage only inserts and updates chunks — it does not delete chunks that were removed from the source. Use `full=True` for a clean sync that removes stale content.
+When `full=False` (the default), the index stage only inserts and updates chunks — it does not delete chunks that were removed from the source. Use `full=True` for a clean sync that removes stale content. The tree stage runs after indexing so document hierarchy and browse/read surfaces stay in sync with the latest indexed chunks.
+
+---
+
+### `browse_corpus_tool`
+
+Browse the persisted document hierarchy for a corpus.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `corpus` | `str` | required | Corpus slug to browse |
+| `path` | `str \| None` | `None` | Optional subtree root path |
+| `depth` | `int \| None` | `None` | Optional maximum relative depth below `path` |
+
+**Returns:** `list[dict]`
+
+Each item is a document-tree node with fields such as `doc_path`, `title`, `source_url`, `depth`, `is_group`, `total_chars`, `section_count`, and `children_count`. The list is already in preorder for direct rendering.
+
+---
+
+### `get_document_tool`
+
+Read a document or one section of a document.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `corpus` | `str` | required | Corpus slug containing the document |
+| `doc_path` | `str` | required | Document path to read |
+| `section` | `str \| None` | `None` | Optional section-path filter |
+| `force` | `bool` | `False` | Force full content output for large documents |
+
+**Returns:** `dict`
+
+- Full mode: `mode`, `doc_path`, `title`, `content`, `source_url`, `total_chars`, `section_count`
+- Outline mode for large documents: `mode`, `doc_path`, `title`, `source_url`, `total_chars`, `section_count`, `sections`, `hint`
+- Missing document: `{"error": "Document '<doc_path>' not found in corpus '<corpus>'"}`

@@ -1,10 +1,12 @@
 """MCP server for doc-hub.
 
-Exposes four tools to LLMs via the Model Context Protocol (MCP):
+Exposes six tools to LLMs via the Model Context Protocol (MCP):
     - search_docs_tool     — Hybrid vector + full-text search across indexed docs
     - list_corpora_tool    — List all registered documentation corpora
     - add_corpus_tool      — Register a new corpus (or update an existing one)
     - refresh_corpus_tool  — Re-run the full pipeline for a corpus
+    - browse_corpus_tool   — Browse the document tree for a corpus
+    - get_document_tool    — Retrieve a document or section by path
 
 Transports:
 
@@ -72,6 +74,7 @@ from doc_hub.search import search_docs
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8340
+LARGE_DOC_THRESHOLD = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +423,117 @@ async def _refresh_corpus_impl(
         "inserted": result.inserted,
         "updated": result.updated,
         "deleted": result.deleted,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: browse_corpus_tool
+# ---------------------------------------------------------------------------
+
+
+@server.tool()
+async def browse_corpus_tool(
+    corpus: str,
+    ctx: Context,
+    path: str | None = None,
+    depth: int | None = None,
+) -> list[dict]:
+    """Browse the document tree for a corpus."""
+    state: AppState = ctx.request_context.lifespan_context
+    return await _browse_corpus_impl(corpus=corpus, path=path, depth=depth, pool=state.pool)
+
+
+async def _browse_corpus_impl(
+    *,
+    corpus: str,
+    path: str | None,
+    depth: int | None,
+    pool: asyncpg.Pool,
+) -> list[dict]:
+    """Core browse-corpus logic."""
+    from doc_hub.documents import get_document_tree  # noqa: PLC0415
+
+    return await get_document_tree(pool, corpus, path=path, max_depth=depth)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_document_tool
+# ---------------------------------------------------------------------------
+
+
+@server.tool()
+async def get_document_tool(
+    corpus: str,
+    doc_path: str,
+    ctx: Context,
+    section: str | None = None,
+    force: bool = False,
+) -> dict:
+    """Get a document or section from a corpus."""
+    state: AppState = ctx.request_context.lifespan_context
+    return await _get_document_impl(
+        corpus=corpus,
+        doc_path=doc_path,
+        section=section,
+        force=force,
+        pool=state.pool,
+    )
+
+
+async def _get_document_impl(
+    *,
+    corpus: str,
+    doc_path: str,
+    section: str | None,
+    force: bool,
+    pool: asyncpg.Pool,
+) -> dict:
+    """Core get-document logic."""
+    from doc_hub.documents import get_document_chunks  # noqa: PLC0415
+
+    chunks = await get_document_chunks(pool, corpus, doc_path, section=section)
+    if not chunks:
+        return {"error": f"Document '{doc_path}' not found in corpus '{corpus}'"}
+
+    total_chars = sum(int(chunk.get("char_count", 0)) for chunk in chunks)
+    section_count = len(chunks)
+    title = next(
+        (str(chunk.get("heading", "")) for chunk in chunks if chunk.get("heading_level") == 1),
+        doc_path,
+    )
+    source_url = str(chunks[0].get("source_url", ""))
+
+    if total_chars > LARGE_DOC_THRESHOLD and not force and section is None:
+        return {
+            "mode": "outline",
+            "doc_path": doc_path,
+            "title": title,
+            "source_url": source_url,
+            "total_chars": total_chars,
+            "section_count": section_count,
+            "sections": [
+                {
+                    "heading": chunk.get("heading"),
+                    "heading_level": chunk.get("heading_level"),
+                    "section_path": chunk.get("section_path"),
+                    "char_count": chunk.get("char_count"),
+                }
+                for chunk in chunks
+            ],
+            "hint": (
+                "Document is large. Request a specific section with section=... "
+                "or set force=true to retrieve the full content."
+            ),
+        }
+
+    return {
+        "mode": "full",
+        "doc_path": doc_path,
+        "title": title,
+        "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
+        "source_url": source_url,
+        "total_chars": total_chars,
+        "section_count": section_count,
     }
 
 

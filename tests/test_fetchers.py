@@ -19,6 +19,7 @@ from doc_hub._builtins.fetchers.llms_txt import (
     LlmsTxtFetcher,
     _derive_base_url,
     _derive_url_pattern,
+    _parse_sections,
     compute_manifest_diff,
     load_manifest,
     url_to_filename,
@@ -248,6 +249,113 @@ def test_write_manifest_sorted_by_filename(tmp_path):
     assert filenames == sorted(filenames)
 
 
+def test_parse_sections_from_llms_txt():
+    content = """# Site Title
+
+## Guides
+- [Install](https://example.com/guides/install.md)
+- [Upgrade](https://example.com/guides/upgrade.md)
+
+### API
+- [Models](https://example.com/api/models.md)
+"""
+
+    assert _parse_sections(content, r"https://example\.com/[^\s\)]+\.md") == [
+        {
+            "title": "Guides",
+            "heading_level": 2,
+            "urls": [
+                "https://example.com/guides/install.md",
+                "https://example.com/guides/upgrade.md",
+            ],
+        },
+        {
+            "title": "API",
+            "heading_level": 3,
+            "urls": ["https://example.com/api/models.md"],
+        },
+    ]
+
+
+def test_parse_sections_urls_before_heading():
+    content = """https://example.com/root.md
+
+## Guides
+- [Install](https://example.com/guides/install.md)
+"""
+
+    assert _parse_sections(content, r"https://example\.com/[^\s\)]+\.md") == [
+        {
+            "title": "",
+            "heading_level": 0,
+            "urls": ["https://example.com/root.md"],
+        },
+        {
+            "title": "Guides",
+            "heading_level": 2,
+            "urls": ["https://example.com/guides/install.md"],
+        },
+    ]
+
+
+def test_parse_sections_deduplicates_urls():
+    content = """## Guides
+- [Install](https://example.com/guides/install.md)
+- [Install Again](https://example.com/guides/install.md)
+"""
+
+    assert _parse_sections(content, r"https://example\.com/[^\s\)]+\.md") == [
+        {
+            "title": "Guides",
+            "heading_level": 2,
+            "urls": ["https://example.com/guides/install.md"],
+        }
+    ]
+
+
+def test_parse_sections_empty_content():
+    assert _parse_sections("", r"https://example\.com/[^\s\)]+\.md") == []
+
+
+def test_parse_sections_no_urls():
+    content = """# Site Title
+
+## Guides
+Some text.
+
+### API
+More text.
+"""
+
+    assert _parse_sections(content, r"https://example\.com/[^\s\)]+\.md") == [
+        {"title": "Guides", "heading_level": 2, "urls": []},
+        {"title": "API", "heading_level": 3, "urls": []},
+    ]
+
+
+def test_manifest_includes_sections(tmp_path):
+    results = [
+        DownloadResult(url="https://example.com/a.md", filename="a.md", success=True, content_hash="abc123"),
+    ]
+    sections = [{"title": "Guides", "heading_level": 2, "urls": ["https://example.com/a.md"]}]
+
+    write_manifest(results, tmp_path, sections=sections)
+    data = json.loads((tmp_path / "manifest.json").read_text())
+
+    assert data["sections"] == sections
+
+
+def test_manifest_omits_sections_when_none(tmp_path):
+    results = [
+        DownloadResult(url="https://example.com/a.md", filename="a.md", success=True),
+    ]
+
+    write_manifest(results, tmp_path, sections=None)
+    data = json.loads((tmp_path / "manifest.json").read_text())
+
+    assert "sections" not in data
+
+
 # ---------------------------------------------------------------------------
 # compute_manifest_diff
 # ---------------------------------------------------------------------------
@@ -401,6 +509,28 @@ async def test_llms_txt_fetcher_manifest_has_content_hash(tmp_path):
     for f in data["files"]:
         if f["success"]:
             assert f["content_hash"] is not None, f"Missing content_hash for {f['filename']}"
+
+
+@pytest.mark.asyncio
+async def test_llms_txt_fetcher_manifest_has_sections(tmp_path):
+    fetcher = LlmsTxtFetcher()
+
+    with patch("doc_hub._builtins.fetchers.llms_txt.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_mock_session()
+        await fetcher.fetch("test-corpus", FETCH_CONFIG, tmp_path)
+
+    data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["sections"] == [
+        {
+            "title": "Docs",
+            "heading_level": 2,
+            "urls": [
+                "https://ai.pydantic.dev/agents.md",
+                "https://ai.pydantic.dev/models/openai/index.md",
+                "https://ai.pydantic.dev/api/base.md",
+            ],
+        }
+    ]
 
 
 @pytest.mark.asyncio

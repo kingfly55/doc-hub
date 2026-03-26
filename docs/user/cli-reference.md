@@ -1,6 +1,6 @@
 # CLI Reference
 
-doc-hub ships five console scripts. This document covers every flag, output format, and exit code for each.
+doc-hub ships seven console scripts. This document covers every flag, output format, and exit code for each.
 
 ---
 
@@ -17,7 +17,7 @@ doc-hub-pipeline --corpus SLUG [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--corpus SLUG` | string | **required** | Corpus slug. Must exist in the `doc_corpora` table. |
-| `--stage {fetch,parse,embed,index}` | choice | all stages | Run only this stage instead of the full pipeline. |
+| `--stage {fetch,parse,embed,index,tree}` | choice | all stages | Run only this stage instead of the full pipeline. |
 | `--clean` | flag | false | Wipe all local data for the corpus before starting (`shutil.rmtree` on the corpus directory). |
 | `--skip-download` | flag | false | Skip the fetch step and re-use the existing `raw/` directory. |
 | `--full-reindex` | flag | false | After upserting, delete DB rows whose `content_hash` is no longer in the current chunk set (removes stale chunks). |
@@ -48,6 +48,9 @@ doc-hub-pipeline --corpus pydantic-ai
 
 # Fetch stage only
 doc-hub-pipeline --corpus pydantic-ai --stage fetch
+
+# Rebuild only the persisted document tree from existing chunks + manifest
+doc-hub-pipeline --corpus pydantic-ai --stage tree
 
 # Clean all local data then run a full pipeline with stale-row removal
 doc-hub-pipeline --corpus pydantic-ai --clean --full-reindex
@@ -171,11 +174,13 @@ LOGLEVEL=DEBUG doc-hub-search "Agent" --corpus pydantic-ai
 
 ## `doc-hub-mcp`
 
-Start the doc-hub MCP server, which exposes search and corpus management tools to LLMs via the Model Context Protocol.
+Start the doc-hub MCP server, which exposes search, corpus management, and document browse/read tools to LLMs via the Model Context Protocol.
 
 ```
 doc-hub-mcp [options]
 ```
+
+See also: `docs/user/mcp-server.md` for the full MCP tool reference.
 
 ### Flags
 
@@ -191,6 +196,8 @@ doc-hub-mcp [options]
 - `list_corpora_tool` — list all registered corpora
 - `add_corpus_tool` — register a new corpus
 - `refresh_corpus_tool` — re-run the full pipeline for a corpus
+- `browse_corpus_tool` — browse the persisted document hierarchy for a corpus
+- `get_document_tool` — read a document or section, with outline mode for large docs
 
 ### Exit codes
 
@@ -242,6 +249,85 @@ doc-hub-mcp --transport sse --host 0.0.0.0 --port 8340
     }
   }
 }
+```
+
+---
+
+## `doc-hub-browse`
+
+Browse the persisted document hierarchy for a corpus.
+
+```
+doc-hub-browse CORPUS [options]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `corpus` | string | **required** | Corpus slug to browse. |
+| `--path PATH` | string | none | Restrict output to this document subtree path. |
+| `--depth N` | int | none | Maximum depth below the selected root path. |
+| `--json` | flag | false | Emit raw JSON tree nodes instead of rendered text. |
+
+### Output
+
+Human-readable mode prints the corpus slug followed by an indented preorder tree. Group nodes are marked with `[group]`. Concrete documents include total character count and section count.
+
+### Examples
+
+```bash
+# Browse the whole corpus
+doc-hub-browse pydantic-ai
+
+# Browse just one subtree
+doc-hub-browse pydantic-ai --path api
+
+# Limit subtree depth
+doc-hub-browse pydantic-ai --path api --depth 1
+
+# Machine-readable output
+doc-hub-browse pydantic-ai --json
+```
+
+---
+
+## `doc-hub-read`
+
+Read a document or a specific section from a corpus.
+
+```
+doc-hub-read CORPUS DOC_PATH [options]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `corpus` | string | **required** | Corpus slug containing the document. |
+| `doc_path` | string | **required** | Document path to read. |
+| `--section SECTION_PATH` | string | none | Restrict output to one section and its descendants. |
+| `--force` | flag | false | Force full content output for large documents. |
+| `--json` | flag | false | Emit the same structured payload shape as the MCP read tool. |
+
+### Large-document behavior
+
+If the selected document exceeds 20,000 characters and neither `--force` nor `--section` is provided, the command prints an outline instead of the full body. Use `--section` to read one section or `--force` to print everything.
+
+### Examples
+
+```bash
+# Read a document
+doc-hub-read pydantic-ai agents
+
+# Read one section and its descendants
+doc-hub-read pydantic-ai agents --section "Agents > Tools"
+
+# Force full output for a large document
+doc-hub-read pydantic-ai agents --force
+
+# Machine-readable output
+doc-hub-read pydantic-ai agents --json
 ```
 
 ---
@@ -362,7 +448,7 @@ None.
 
 1. Opens a DB pool and ensures the schema is up to date.
 2. Queries all corpora with `enabled = true` in `doc_corpora`.
-3. Runs the full fetch → parse → embed → index pipeline for each corpus in sequence.
+3. Runs the full fetch → parse → embed → index → tree pipeline for each corpus in sequence.
 4. If a corpus fails, the error is caught and logged, and processing continues with the next corpus.
 5. Prints a summary table when all corpora have been processed.
 

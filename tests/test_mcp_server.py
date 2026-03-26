@@ -18,7 +18,10 @@ import pytest
 from doc_hub.models import Corpus
 from doc_hub.mcp_server import (
     AppState,
+    LARGE_DOC_THRESHOLD,
     _add_corpus_impl,
+    _browse_corpus_impl,
+    _get_document_impl,
     _list_corpora_impl,
     _refresh_corpus_impl,
     _search_tool_impl,
@@ -92,7 +95,7 @@ def _make_mock_pool() -> MagicMock:
 
 
 class TestServerRegistration:
-    """Verify the four tools are registered on the FastMCP server."""
+    """Verify the six tools are registered on the FastMCP server."""
 
     def test_server_name(self):
         """Server name should be 'doc-hub'."""
@@ -118,14 +121,26 @@ class TestServerRegistration:
         tool_names = [t.name for t in server._tool_manager.list_tools()]
         assert "refresh_corpus_tool" in tool_names
 
-    def test_exactly_four_tools_registered(self):
-        """Exactly four tools are registered — no accidental extras."""
+    def test_browse_corpus_tool_registered(self):
+        """browse_corpus_tool is registered on the server."""
+        tool_names = [t.name for t in server._tool_manager.list_tools()]
+        assert "browse_corpus_tool" in tool_names
+
+    def test_get_document_tool_registered(self):
+        """get_document_tool is registered on the server."""
+        tool_names = [t.name for t in server._tool_manager.list_tools()]
+        assert "get_document_tool" in tool_names
+
+    def test_exactly_six_tools_registered(self):
+        """Exactly six tools are registered — no accidental extras."""
         tool_names = [t.name for t in server._tool_manager.list_tools()]
         expected = {
             "search_docs_tool",
             "list_corpora_tool",
             "add_corpus_tool",
             "refresh_corpus_tool",
+            "browse_corpus_tool",
+            "get_document_tool",
         }
         assert set(tool_names) == expected
 
@@ -969,6 +984,333 @@ class TestRefreshCorpusImpl:
         assert result["inserted"] == 0
         assert result["updated"] == 0
         assert result["deleted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _browse_corpus_impl
+# ---------------------------------------------------------------------------
+
+
+class TestBrowseCorpusImpl:
+    """Tests for the core browse-corpus logic."""
+
+    @pytest.mark.asyncio
+    async def test_returns_list_of_dicts(self):
+        """Returns a list of dicts from get_document_tree."""
+        pool = _make_mock_pool()
+        tree = [{"doc_path": "guide/intro", "title": "Intro"}]
+
+        with patch("doc_hub.documents.get_document_tree", new=AsyncMock(return_value=tree)):
+            result = await _browse_corpus_impl(corpus="pydantic-ai", path=None, depth=None, pool=pool)
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], dict)
+
+    @pytest.mark.asyncio
+    async def test_passes_path_filter(self):
+        """Forwards path to get_document_tree."""
+        pool = _make_mock_pool()
+        mock_tree = AsyncMock(return_value=[])
+
+        with patch("doc_hub.documents.get_document_tree", new=mock_tree):
+            await _browse_corpus_impl(corpus="pydantic-ai", path="guide", depth=None, pool=pool)
+
+        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path="guide", max_depth=None)
+
+    @pytest.mark.asyncio
+    async def test_passes_depth_filter(self):
+        """Forwards depth to get_document_tree as max_depth."""
+        pool = _make_mock_pool()
+        mock_tree = AsyncMock(return_value=[])
+
+        with patch("doc_hub.documents.get_document_tree", new=mock_tree):
+            await _browse_corpus_impl(corpus="pydantic-ai", path=None, depth=2, pool=pool)
+
+        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path=None, max_depth=2)
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_unknown_corpus(self):
+        """Returns [] unchanged for an unknown corpus."""
+        pool = _make_mock_pool()
+
+        with patch("doc_hub.documents.get_document_tree", new=AsyncMock(return_value=[])):
+            result = await _browse_corpus_impl(corpus="missing", path=None, depth=None, pool=pool)
+
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _get_document_impl
+# ---------------------------------------------------------------------------
+
+
+class TestGetDocumentImpl:
+    """Tests for the core get-document logic."""
+
+    def _make_chunk(
+        self,
+        *,
+        heading: str = "Overview",
+        heading_level: int = 2,
+        section_path: str = "Overview",
+        content: str = "Section content",
+        source_url: str = "https://example.com/docs/intro",
+        char_count: int | None = None,
+    ) -> dict:
+        return {
+            "id": 1,
+            "heading": heading,
+            "heading_level": heading_level,
+            "section_path": section_path,
+            "char_count": len(content) if char_count is None else char_count,
+            "source_file": "guide__intro.md",
+            "source_url": source_url,
+            "content": content,
+            "start_line": 1,
+            "end_line": 10,
+            "category": "guide",
+        }
+
+    @pytest.mark.asyncio
+    async def test_returns_full_mode_for_small_doc(self):
+        """Small documents return full mode."""
+        pool = _make_mock_pool()
+        chunks = [self._make_chunk(content="Short doc")]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["mode"] == "full"
+        assert result["content"] == "Short doc"
+
+    @pytest.mark.asyncio
+    async def test_returns_outline_mode_for_large_doc(self):
+        """Large documents return outline mode by default."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(heading="Intro", heading_level=1, section_path="Intro", content="# Intro"),
+            self._make_chunk(
+                heading="Deep Dive",
+                heading_level=2,
+                section_path="Intro > Deep Dive",
+                content="A" * (LARGE_DOC_THRESHOLD + 1),
+            ),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/large",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["mode"] == "outline"
+        assert result["sections"] == [
+            {
+                "heading": "Intro",
+                "heading_level": 1,
+                "section_path": "Intro",
+                "char_count": len("# Intro"),
+            },
+            {
+                "heading": "Deep Dive",
+                "heading_level": 2,
+                "section_path": "Intro > Deep Dive",
+                "char_count": LARGE_DOC_THRESHOLD + 1,
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_force_overrides_outline(self):
+        """force=True returns full mode even for large docs."""
+        pool = _make_mock_pool()
+        chunks = [self._make_chunk(content="A" * (LARGE_DOC_THRESHOLD + 1))]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/large",
+                section=None,
+                force=True,
+                pool=pool,
+            )
+
+        assert result["mode"] == "full"
+
+    @pytest.mark.asyncio
+    async def test_section_filter_returns_full_and_is_forwarded(self):
+        """section queries return full mode and forward section to chunk lookup."""
+        pool = _make_mock_pool()
+        chunks = [self._make_chunk(section_path="Intro > API", content="A" * (LARGE_DOC_THRESHOLD + 1))]
+        get_document_chunks = AsyncMock(return_value=chunks)
+
+        with patch("doc_hub.documents.get_document_chunks", new=get_document_chunks):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/large",
+                section="Intro > API",
+                force=False,
+                pool=pool,
+            )
+
+        assert result["mode"] == "full"
+        get_document_chunks.assert_awaited_once_with(
+            pool,
+            "pydantic-ai",
+            "guide/large",
+            section="Intro > API",
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_missing_doc(self):
+        """Returns an error dict when no chunks are found."""
+        pool = _make_mock_pool()
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=[])):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="missing/doc",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result == {"error": "Document 'missing/doc' not found in corpus 'pydantic-ai'"}
+
+    @pytest.mark.asyncio
+    async def test_content_is_concatenated_chunks(self):
+        """Full mode concatenates chunk content with blank lines."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(content="First chunk"),
+            self._make_chunk(content="Second chunk"),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["content"] == "First chunk\n\nSecond chunk"
+
+    @pytest.mark.asyncio
+    async def test_title_from_h1_chunk(self):
+        """Uses the first H1 heading as the document title."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(heading="Subsection", heading_level=2),
+            self._make_chunk(heading="Real Title", heading_level=1),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["title"] == "Real Title"
+
+    @pytest.mark.asyncio
+    async def test_title_fallback_to_doc_path(self):
+        """Falls back to doc_path when no H1 chunk exists."""
+        pool = _make_mock_pool()
+        chunks = [self._make_chunk(heading="Overview", heading_level=2)]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["title"] == "guide/intro"
+
+    @pytest.mark.asyncio
+    async def test_source_url_from_first_chunk(self):
+        """Uses source_url from the first chunk."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(source_url="https://example.com/first"),
+            self._make_chunk(source_url="https://example.com/second"),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["source_url"] == "https://example.com/first"
+
+    @pytest.mark.asyncio
+    async def test_total_chars_computed_from_chunk_char_count(self):
+        """Computes total_chars from chunk char_count values, not content length."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(content="abc", char_count=30),
+            self._make_chunk(content="defgh", char_count=50),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/intro",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["total_chars"] == 80
+        assert result["section_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_outline_includes_hint_and_sections(self):
+        """Outline mode includes a hint and section metadata."""
+        pool = _make_mock_pool()
+        chunks = [
+            self._make_chunk(heading="Intro", heading_level=1, section_path="Intro", content="# Intro"),
+            self._make_chunk(
+                heading="Usage",
+                heading_level=2,
+                section_path="Intro > Usage",
+                content="A" * LARGE_DOC_THRESHOLD,
+            ),
+        ]
+
+        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
+            result = await _get_document_impl(
+                corpus="pydantic-ai",
+                doc_path="guide/big",
+                section=None,
+                force=False,
+                pool=pool,
+            )
+
+        assert result["mode"] == "outline"
+        assert result["sections"][0]["heading"] == "Intro"
+        assert "section" in result["hint"].lower()
+        assert "force" in result["hint"].lower()
 
 
 # ---------------------------------------------------------------------------
