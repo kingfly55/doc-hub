@@ -1,0 +1,80 @@
+.TH DOC-HUB 1 "2026-03-26" "doc-hub 0.1.0" "User Commands"
+.SH NAME
+doc-hub \- unified documentation search and pipeline CLI
+.SH SYNOPSIS
+.B doc-hub
+.RI [ command ]
+.SH DESCRIPTION
+doc-hub works with registered corpora, search, pipeline evaluation, and MCP serving.
+Keep to the top-level command tree and use the examples below as a quick reference.
+.SH COMMANDS
+.TP
+.B doc-hub docs list
+List registered corpora.
+.TP
+.B doc-hub docs search "QUERY"
+Search a corpus.
+.TP
+.B doc-hub docs browse CORPUS
+Open corpus browsing.
+.TP
+.B doc-hub docs read CORPUS PAGE
+Read a page from a corpus.
+.TP
+.B doc-hub pipeline run --corpus CORPUS
+Run the pipeline against a corpus.
+.TP
+.B doc-hub serve mcp
+Start the MCP server.
+.SH EXAMPLES
+.PP
+List the available corpora:
+.PP
+.RS
+.nf
+doc-hub docs list
+.fi
+.RE
+.PP
+Search a corpus:
+.PP
+.RS
+.nf
+doc-hub docs search "retry logic"
+.fi
+.RE
+.PP
+Browse and read documentation:
+.PP
+.RS
+.nf
+doc-hub docs browse pydantic-ai
+doc-hub docs read pydantic-ai agents
+.fi
+.RE
+.PP
+Run the pipeline for one corpus:
+.PP
+.RS
+.nf
+doc-hub pipeline run --corpus pydantic-ai
+.fi
+.RE
+.PP
+Start the MCP server:
+.PP
+.RS
+.nf
+doc-hub serve mcp
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B DOC_HUB_DATA_DIR
+Overrides the local data directory used for the database and env file.
+.SH FILES
+.TP
+.I $DOC_HUB_DATA_DIR/env
+Optional local environment overrides loaded by the CLI.
+.SH SEE ALSO
+.BR man (1)

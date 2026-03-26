@@ -6,11 +6,39 @@ The canonical command surface for doc-hub is a single executable:
 doc-hub ...
 ```
 
+For a concise local reference after install, use `man doc-hub`.
+
 The command tree is organized into three groups:
 
 - `doc-hub docs ...`
 - `doc-hub pipeline ...`
 - `doc-hub serve ...`
+
+---
+
+## `doc-hub docs list`
+
+List registered corpora.
+
+```bash
+doc-hub docs list [options]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | flag | false | Emit machine-readable corpus records. |
+
+### Examples
+
+```bash
+# List corpora
+doc-hub docs list
+
+# Machine-readable output
+doc-hub docs list --json
+```
 
 ---
 

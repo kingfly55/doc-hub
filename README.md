@@ -29,7 +29,10 @@ Verify:
 
 ```bash
 doc-hub --help
+man doc-hub
 ```
+
+`man doc-hub` is the concise local reference for the installed CLI.
 
 The supported command surface is the unified `doc-hub` CLI. Older pre-unification wrappers such as `doc-hub-search`, `doc-hub-pipeline`, `doc-hub-eval`, `doc-hub-sync-all`, and `doc-hub-mcp` should not remain on your PATH.
 
@@ -97,6 +100,7 @@ doc-hub docs search "how do I handle retries?" --corpus pydantic-ai
 
 | Command | Description |
 |--------|-------------|
+| `doc-hub docs list` | List registered corpora |
 | `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus |
 | `doc-hub docs read` | Read a document or section |
 | `doc-hub docs search` | Hybrid search CLI |

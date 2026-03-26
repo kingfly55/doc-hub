@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import patch
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 def test_unified_cli_importable():
@@ -19,6 +20,46 @@ def test_top_level_groups_parse():
     assert args.command_group == "docs"
     assert args.docs_command == "browse"
     assert args.corpus == "demo"
+
+
+def test_docs_list_emits_human_readable_output(capsys):
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+    corpora = [
+        SimpleNamespace(slug="pydantic-ai", name="Pydantic AI", enabled=True),
+        SimpleNamespace(slug="legacy", name="Legacy Docs", enabled=False),
+    ]
+
+    with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
+        "doc_hub.cli.docs.ensure_schema", AsyncMock()
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+        main(["docs", "list"])
+
+    assert capsys.readouterr().out == (
+        "Pydantic AI [pydantic-ai] - enabled\n"
+        "Legacy Docs [legacy] - disabled\n"
+    )
+
+
+def test_docs_list_emits_json_output(capsys):
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+    corpora = [
+        SimpleNamespace(slug="pydantic-ai", name="Pydantic AI", enabled=True),
+        SimpleNamespace(slug="legacy", name="Legacy Docs", enabled=False),
+    ]
+
+    with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
+        "doc_hub.cli.docs.ensure_schema", AsyncMock()
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+        main(["docs", "list", "--json"])
+
+    assert json.loads(capsys.readouterr().out) == [
+        {"slug": "pydantic-ai", "display_name": "Pydantic AI", "enabled": True},
+        {"slug": "legacy", "display_name": "Legacy Docs", "enabled": False},
+    ]
 
 
 def test_docs_search_routes_to_search_handler():
@@ -46,6 +87,40 @@ def test_serve_mcp_routes_to_mcp_handler():
         main(["serve", "mcp", "--transport", "stdio"])
 
     mock_handler.assert_called_once()
+
+
+def test_pyproject_packages_doc_hub_manpage():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    pyproject = (root / "pyproject.toml").read_text()
+
+    assert (root / "man" / "doc-hub.1").exists()
+    assert "share/man/man1/doc-hub.1" in pyproject
+
+
+def test_doc_hub_manpage_renders():
+    import subprocess
+    from pathlib import Path
+
+    manpage = Path(__file__).resolve().parent.parent / "man" / "doc-hub.1"
+    result = subprocess.run(["man", "-l", str(manpage)], capture_output=True, text=True, check=True)
+
+    assert "doc-hub" in result.stdout
+    assert "doc-hub docs list" in result.stdout
+
+
+def test_docs_mention_manpage_and_corpus_listing():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text()
+    cli_reference = (root / "docs" / "user" / "cli-reference.md").read_text()
+
+    assert "man doc-hub" in readme
+    assert "doc-hub docs list" in readme
+    assert "man doc-hub" in cli_reference
+    assert "doc-hub docs list" in cli_reference
 
 
 def test_old_script_names_removed_from_pyproject():

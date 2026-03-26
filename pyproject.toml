@@ -19,6 +19,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/doc_hub"]
+shared-data = {"man/doc-hub.1" = "share/man/man1/doc-hub.1"}
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "man/doc-hub.1",
+]
 
 [project.scripts]
 doc-hub = "doc_hub.cli.main:main"
