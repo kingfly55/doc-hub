@@ -13,12 +13,22 @@ Help operators and users:
 ## Preferred workflow
 
 1. Read `README.md` for the map
-2. Run read-only diagnostics first:
+2. Read `MEMORY.md` and any relevant `memory/*.md` files for current install context
+3. Run read-only diagnostics first:
    - `scripts/check-env.sh`
    - `scripts/check-db.sh`
    - `scripts/check-mcp.sh`
-3. Use `diagnostics/common-failures.md` to map symptoms to likely causes
-4. Only then move to `repair/` playbooks
+4. Use `diagnostics/common-failures.md` to map symptoms to likely causes
+5. Only then move to `repair/` playbooks
+
+## Memory maintenance
+
+After any meaningful install, configuration change, diagnosis, or repair:
+
+- update `memory/installation-state.md` if the install shape or configuration changed
+- update `memory/resolved-incidents.md` if you confirmed a non-obvious issue and fix
+- keep `MEMORY.md` in sync with the available memory files
+- prefer updating existing entries over creating duplicates
 
 ## Safety rules
 
