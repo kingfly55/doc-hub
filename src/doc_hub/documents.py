@@ -1,6 +1,7 @@
 """Document hierarchy helpers for doc-hub."""
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -38,6 +39,36 @@ def _slugify(title: str) -> str:
 
 def _clean_heading_text(heading: str) -> str:
     return re.sub(r"^#+\s*", "", heading).strip()
+
+
+def _doc_id_exists(corpus_slug: str, candidate: str, *, exclude_doc_path: str | None = None) -> bool:
+    return False
+
+
+def _build_doc_id_map(corpus_slug: str, doc_paths: list[str], *, length: int = 6) -> dict[str, str]:
+    ids_by_path: dict[str, str] = {}
+    used_ids: set[str] = set()
+
+    for doc_path in sorted(doc_paths):
+        digest = hashlib.sha256(f"{corpus_slug}:{doc_path}".encode()).hexdigest()
+        candidate_length = length
+        while True:
+            candidate = digest[:candidate_length]
+            if candidate not in used_ids:
+                ids_by_path[doc_path] = candidate
+                used_ids.add(candidate)
+                break
+            candidate_length += 2
+            if candidate_length > len(digest):
+                ids_by_path[doc_path] = digest
+                used_ids.add(digest)
+                break
+
+    return ids_by_path
+
+
+def derive_doc_id(corpus_slug: str, doc_path: str, length: int = 6) -> str:
+    return _build_doc_id_map(corpus_slug, [doc_path], length=length)[doc_path]
 
 
 def _derive_title(source_file: str, chunks_by_file: dict[str, list[Chunk]]) -> str:
@@ -365,6 +396,8 @@ async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max
 
     row_dicts = [dict(row) for row in rows]
     path_set = {str(row["doc_path"]) for row in row_dicts}
+    concrete_doc_paths = [str(row["doc_path"]) for row in row_dicts if not bool(row["is_group"])]
+    doc_ids_by_path = _build_doc_id_map(corpus_slug, concrete_doc_paths)
     child_counts = {doc_path: 0 for doc_path in path_set}
     for doc_path in path_set:
         parent_path, _ = _node_parent_path_and_depth(doc_path)
@@ -374,6 +407,7 @@ async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max
     return [
         {
             "doc_path": str(row["doc_path"]),
+            "doc_id": None if bool(row["is_group"]) else doc_ids_by_path[str(row["doc_path"])],
             "title": str(row["title"]),
             "source_url": str(row["source_url"]),
             "depth": int(row["depth"]),
@@ -400,12 +434,15 @@ async def _synthetic_tree_fallback(pool, corpus_slug: str) -> list[dict]:
     """
     rows = await pool.fetch(sql, corpus_slug)
     result = []
+    doc_paths = [_doc_path_from_source_file(str(row["source_file"])) for row in rows]
+    doc_ids_by_path = _build_doc_id_map(corpus_slug, doc_paths)
     for row in rows:
         source_file = str(row["source_file"])
         doc_path = _doc_path_from_source_file(source_file)
         result.append(
             {
                 "doc_path": doc_path,
+                "doc_id": doc_ids_by_path[doc_path],
                 "title": _humanize_path_segment(doc_path.rsplit("/", 1)[-1]),
                 "source_url": str(row["source_url"]),
                 "depth": 0,
@@ -426,6 +463,22 @@ def _source_file_from_doc_path(doc_path: str) -> str:
         else:
             doc_path = parts[-1]
     return f"{doc_path.replace('/', '__')}.md"
+
+
+async def resolve_doc_path(pool, corpus_slug: str, doc_ref: str) -> str | None:
+    existing_path = await pool.fetchval(
+        "SELECT doc_path FROM doc_documents WHERE corpus_id = $1 AND doc_path = $2 LIMIT 1",
+        corpus_slug,
+        doc_ref,
+    )
+    if existing_path is not None:
+        return str(existing_path)
+
+    doc_rows = await get_document_tree(pool, corpus_slug)
+    matches = [str(row["doc_path"]) for row in doc_rows if row.get("doc_id") == doc_ref]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 async def get_document_chunks(pool, corpus_slug: str, doc_path: str, section: str | None = None) -> list[dict]:

@@ -7,6 +7,7 @@ import pytest
 
 from doc_hub.documents import (
     DocumentNode,
+    _build_doc_id_map,
     _doc_path_from_source_file,
     _derive_title,
     _humanize_path_segment,
@@ -14,10 +15,12 @@ from doc_hub.documents import (
     _synthetic_tree_fallback,
     build_document_tree,
     delete_stale_documents,
+    derive_doc_id,
     get_document_chunks,
     get_document_sections,
     get_document_tree,
     link_chunks_to_documents,
+    resolve_doc_path,
     upsert_documents,
 )
 from doc_hub.parse import Chunk
@@ -69,6 +72,31 @@ def test_humanize_path_segment():
 
 def test_slugify():
     assert _slugify("API Reference v2!") == "api-reference-v2"
+
+
+def test_derive_doc_id_is_deterministic_and_short():
+    doc_id = derive_doc_id("pydantic-ai", "guide/install")
+
+    assert doc_id == derive_doc_id("pydantic-ai", "guide/install")
+    assert len(doc_id) == 6
+    assert doc_id.isalnum()
+    assert doc_id == doc_id.lower()
+
+
+def test_derive_doc_id_extends_on_collision():
+    with patch("doc_hub.documents.hashlib.sha256") as mock_sha256:
+        mock_sha256.side_effect = [
+            MagicMock(hexdigest=MagicMock(return_value="abc123456789")),
+            MagicMock(hexdigest=MagicMock(return_value="abc123999999")),
+            MagicMock(hexdigest=MagicMock(return_value="abc123456789")),
+        ]
+
+        mapping = _build_doc_id_map("pydantic-ai", ["guide/install", "guide/other"])
+        result = derive_doc_id("pydantic-ai", "guide/install")
+
+    assert result == "abc123"
+    assert mapping["guide/install"] == "abc123"
+    assert mapping["guide/other"] == "abc12399"
 
 
 def test_build_tree_empty_input():
@@ -513,6 +541,7 @@ async def test_get_document_tree_returns_list():
     assert result == [
         {
             "doc_path": "guide",
+            "doc_id": derive_doc_id("test-corpus", "guide"),
             "title": "Guide",
             "source_url": "https://example.com/guide",
             "depth": 0,
@@ -658,6 +687,31 @@ async def test_get_document_chunks_handles_namespaced_doc_path():
 
 
 @pytest.mark.asyncio
+async def test_resolve_doc_path_returns_canonical_path_for_existing_doc_path():
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value="guide")
+
+    result = await resolve_doc_path(pool, "test-corpus", "guide")
+
+    assert result == "guide"
+    assert pool.fetchval.await_args_list[0].args[2] == "guide"
+
+
+@pytest.mark.asyncio
+async def test_resolve_doc_path_falls_back_to_doc_id_lookup():
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value=None)
+
+    with patch(
+        "doc_hub.documents.get_document_tree",
+        new=AsyncMock(return_value=[{"doc_path": "guide/install", "doc_id": "abc123"}]),
+    ):
+        result = await resolve_doc_path(pool, "test-corpus", "abc123")
+
+    assert result == "guide/install"
+
+
+@pytest.mark.asyncio
 async def test_get_document_sections_returns_outline():
     chunks = [
         {
@@ -710,6 +764,7 @@ async def test_synthetic_tree_fallback_flat_list_uses_first_available_source_url
     assert result == [
         {
             "doc_path": "guides/install",
+            "doc_id": derive_doc_id("test-corpus", "guides/install"),
             "title": "Install",
             "source_url": "https://example.com/install",
             "depth": 0,
@@ -720,6 +775,7 @@ async def test_synthetic_tree_fallback_flat_list_uses_first_available_source_url
         },
         {
             "doc_path": "reference",
+            "doc_id": derive_doc_id("test-corpus", "reference"),
             "title": "Reference",
             "source_url": "",
             "depth": 0,
@@ -752,6 +808,7 @@ async def test_synthetic_tree_fallback_prefers_first_available_source_url_over_l
     assert result == [
         {
             "doc_path": "guide",
+            "doc_id": derive_doc_id("test-corpus", "guide"),
             "title": "Guide",
             "source_url": "https://example.com/a-first",
             "depth": 0,

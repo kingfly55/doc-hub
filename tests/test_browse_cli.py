@@ -53,12 +53,13 @@ def test_render_tree_content_nodes():
             "title": "Install",
             "depth": 0,
             "is_group": False,
+            "doc_id": "abc123",
             "total_chars": 12345,
             "section_count": 3,
         }
     ]
 
-    assert _render_tree(nodes) == "Install 12,345 chars  3 sections"
+    assert _render_tree(nodes) == "Install [abc123] 12,345 chars  3 sections"
 
 
 def test_render_tree_indentation():
@@ -76,6 +77,7 @@ def test_render_tree_indentation():
             "title": "Child",
             "depth": 1,
             "is_group": False,
+            "doc_id": "child1",
             "total_chars": 100,
             "section_count": 2,
         },
@@ -83,6 +85,7 @@ def test_render_tree_indentation():
             "title": "Grandchild",
             "depth": 2,
             "is_group": False,
+            "doc_id": "grand2",
             "total_chars": 50,
             "section_count": 1,
         },
@@ -90,8 +93,8 @@ def test_render_tree_indentation():
 
     assert _render_tree(nodes).splitlines() == [
         "Root [group]",
-        "    Child 100 chars  2 sections",
-        "        Grandchild 50 chars  1 section",
+        "    Child [child1] 100 chars  2 sections",
+        "        Grandchild [grand2] 50 chars  1 section",
     ]
 
 
@@ -103,12 +106,13 @@ def test_render_tree_single_section_no_plural():
             "title": "Overview",
             "depth": 0,
             "is_group": False,
+            "doc_id": "ovr123",
             "total_chars": 1,
             "section_count": 1,
         }
     ]
 
-    assert _render_tree(nodes) == "Overview 1 chars  1 section"
+    assert _render_tree(nodes) == "Overview [ovr123] 1 chars  1 section"
 
 
 def test_render_tree_preserves_input_order():
@@ -217,7 +221,10 @@ def test_browse_async_json_output():
 
     args = argparse.Namespace(corpus="demo", path="guides", depth=1, json=True)
     pool = MagicMock()
-    nodes = [{"title": "Guides", "depth": 0, "is_group": True, "total_chars": 0, "section_count": 0}]
+    nodes = [
+        {"title": "Guides", "depth": 0, "is_group": True, "total_chars": 0, "section_count": 0},
+        {"title": "Install", "depth": 1, "is_group": False, "doc_id": "abc123", "total_chars": 120, "section_count": 2},
+    ]
 
     stdout = io.StringIO()
     with (
@@ -244,6 +251,7 @@ def test_read_not_found_prints_message_and_returns_successfully():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value=None)),
         patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=[])),
         redirect_stdout(stdout),
     ):
@@ -268,6 +276,7 @@ def test_read_json_outline_for_large_document():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")),
         patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)),
         redirect_stdout(stdout),
     ):
@@ -296,6 +305,7 @@ def test_read_json_full_for_force_or_section():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")) as mock_resolve_doc_path,
         patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)) as mock_get_chunks,
         redirect_stdout(stdout),
     ):
@@ -306,6 +316,34 @@ def test_read_json_full_for_force_or_section():
     payload = json.loads(stdout.getvalue())
     assert payload["mode"] == "full"
     assert payload["content"] == "First\n\nSecond"
+    mock_resolve_doc_path.assert_awaited_once_with(pool, "demo", "guide/large")
+    mock_get_chunks.assert_awaited_once_with(pool, "demo", "guide/large", section=None)
+
+
+def test_read_resolves_short_doc_id_before_loading_chunks():
+    from doc_hub import browse as browse_module
+
+    args = argparse.Namespace(corpus="demo", doc_path="abc123", section=None, force=True, json=True)
+    pool = MagicMock()
+    chunks = [
+        {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 10, "source_url": "https://example.com/doc", "content": "First"},
+    ]
+
+    stdout = io.StringIO()
+    with (
+        patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
+        patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")) as mock_resolve_doc_path,
+        patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)) as mock_get_chunks,
+        redirect_stdout(stdout),
+    ):
+        pool.close = AsyncMock()
+        import asyncio
+        asyncio.run(browse_module.read(args))
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["doc_path"] == "guide/large"
+    mock_resolve_doc_path.assert_awaited_once_with(pool, "demo", "abc123")
     mock_get_chunks.assert_awaited_once_with(pool, "demo", "guide/large", section=None)
 
 

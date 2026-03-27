@@ -15,7 +15,7 @@ import logging
 from dotenv import load_dotenv
 
 from doc_hub.db import create_pool, ensure_schema
-from doc_hub.documents import get_document_chunks, get_document_tree
+from doc_hub.documents import get_document_chunks, get_document_tree, resolve_doc_path
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,9 @@ def _render_tree(nodes: list[dict]) -> str:
         section_count = int(node.get("section_count", 0))
         section_label = "section" if section_count == 1 else "sections"
         total_chars = int(node.get("total_chars", 0))
-        lines.append(f"{indent}{title} {total_chars:,} chars  {section_count} {section_label}")
+        doc_id = node.get("doc_id")
+        id_suffix = f" [{doc_id}]" if doc_id else ""
+        lines.append(f"{indent}{title}{id_suffix} {total_chars:,} chars  {section_count} {section_label}")
     return "\n".join(lines)
 
 
@@ -71,14 +73,19 @@ async def read(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
-        chunks = await get_document_chunks(pool, args.corpus, args.doc_path, section=args.section)
+        resolved_doc_path = await resolve_doc_path(pool, args.corpus, args.doc_path)
+        if resolved_doc_path is None:
+            print(f"Document '{args.doc_path}' not found in corpus '{args.corpus}'")
+            return
+
+        chunks = await get_document_chunks(pool, args.corpus, resolved_doc_path, section=args.section)
         if not chunks:
             print(f"Document '{args.doc_path}' not found in corpus '{args.corpus}'")
             return
 
         title = next(
             (str(chunk.get("heading", "")) for chunk in chunks if chunk.get("heading_level") == 1),
-            args.doc_path,
+            resolved_doc_path,
         )
         source_url = str(chunks[0].get("source_url", ""))
         total_chars = sum(int(chunk.get("char_count", 0)) for chunk in chunks)
@@ -87,7 +94,7 @@ async def read(args: argparse.Namespace) -> None:
         if total_chars > LARGE_DOC_THRESHOLD and not args.force and args.section is None:
             payload = {
                 "mode": "outline",
-                "doc_path": args.doc_path,
+                "doc_path": resolved_doc_path,
                 "title": title,
                 "source_url": source_url,
                 "total_chars": total_chars,
@@ -116,7 +123,7 @@ async def read(args: argparse.Namespace) -> None:
 
         payload = {
             "mode": "full",
-            "doc_path": args.doc_path,
+            "doc_path": resolved_doc_path,
             "title": title,
             "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
             "source_url": source_url,
@@ -151,7 +158,7 @@ def build_read_parser(parser: argparse.ArgumentParser | None = None) -> argparse
         description="Read a document from a corpus.",
     )
     parser.add_argument("corpus", help="Corpus slug containing the document")
-    parser.add_argument("doc_path", help="Document path to read")
+    parser.add_argument("doc_path", help="Document path or short document ID to read")
     parser.add_argument("--section", help="Optional section path to read")
     parser.add_argument("--force", action="store_true", help="Force full content for large documents")
     parser.add_argument("--json", action="store_true", help="Emit JSON output")

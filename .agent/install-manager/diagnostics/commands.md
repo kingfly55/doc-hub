@@ -4,6 +4,7 @@
 
 ```bash
 doc-hub --help
+doc-hub docs man
 doc-hub docs browse --help
 doc-hub docs read --help
 doc-hub docs search --help
@@ -42,7 +43,16 @@ doc-hub pipeline sync-all
 ## Docs operations
 
 ```bash
+# Print bundled CLI reference directly
+doc-hub docs man
+
+# Browse and note short document IDs from the output
 doc-hub docs browse <slug>
-doc-hub docs read <slug> <doc_path>
-doc-hub docs search "query" --corpus <slug>
+
+# Read by full document path or short ID from browse output
+doc-hub docs read <slug> <doc_path_or_id>
+
+# Search requires at least one corpus and accepts repeated --corpus
+doc-hub docs search --corpus <slug> "query"
+doc-hub docs search --corpus <slug-a> --corpus <slug-b> "query"
 ```

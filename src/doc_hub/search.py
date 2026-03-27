@@ -5,7 +5,7 @@ Combines vector KNN search (via VectorChord) and PostgreSQL full-text search,
 merged using Reciprocal Rank Fusion (RRF) with k=60.
 
 Ported from pydantic_ai_docs/search.py with the following additions:
-- Optional ``corpus`` parameter to scope searches to a single corpus
+- Optional ``corpora`` parameter to scope searches to one or more corpora
 - ``SearchResult`` includes ``id`` and ``corpus_id`` fields (for cross-corpus search)
 - Pool helpers consolidated — use doc_hub.db.create_pool() (no duplication)
 - ``make_search_agent()`` intentionally NOT ported (no pydantic-ai dependency)
@@ -13,8 +13,8 @@ Ported from pydantic_ai_docs/search.py with the following additions:
 Usage:
     # Via CLI:
     doc-hub-search "how do I handle retries?" --corpus pydantic-ai
-    doc-hub-search "how do I add middleware?"
-    doc-hub-search "Agent" --corpus pydantic-ai --category api --limit 10
+    doc-hub-search "how do I add middleware?" --corpus fastapi
+    doc-hub-search "Agent" --corpus pydantic-ai --corpus fastapi --category api --limit 10
 
     # As a library:
     import asyncio
@@ -121,11 +121,11 @@ async def _embed_query_async(
     the plugin registry. The default is determined by reading the
     first available embedder, or "gemini" if available.
 
-    IMPORTANT: Cross-corpus search only works correctly when all corpora
+    IMPORTANT: Cross-corpora search only works correctly when all corpora
     use the same embedder. The query is embedded once with this embedder,
     and the resulting vector is compared against all corpora's chunk
-    embeddings. If corpus A uses a different embedder than this one,
-    similarity scores for corpus A will be meaningless.
+    embeddings. If corpora A uses a different embedder than this one,
+    similarity scores for corpora A will be meaningless.
 
     Args:
         query: The query string to embed.
@@ -168,10 +168,10 @@ def _escape_like(value: str) -> str:
 
 
 def _build_hybrid_sql(
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     config: SearchConfig | None = None,
 ) -> str:
-    """Build the hybrid search SQL with optional corpus filter.
+    """Build the hybrid search SQL with optional corpora filter.
 
     Uses the fixed-parameter approach from the existing code:
     all bind parameters are always present, optional filters use NULL to disable.
@@ -179,7 +179,7 @@ def _build_hybrid_sql(
     Bind parameter numbering:
     - $1 -- query embedding vector (as string)
     - $2 -- query text (for websearch_to_tsquery)
-    - $3 -- corpus_id (str | None, NULL = search all corpora)
+    - $3 -- corpus_id array (list[str] | None, NULL = no corpus filter)
     - $4 -- categories include array (list[str] | None)
     - $5 -- exclude_categories array (list[str] | None)
     - $6 -- source_url_prefix (str | None, pre-escaped)
@@ -204,7 +204,7 @@ WITH vector_results AS (
            1 - (embedding <=> $1::vector) AS vec_similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
     FROM doc_chunks
-    WHERE ($3::text IS NULL OR corpus_id = $3)
+    WHERE ($3::text[] IS NULL OR corpus_id = ANY($3))
       AND ($4::text[] IS NULL OR category = ANY($4))
       AND ($5::text[] IS NULL OR category != ALL($5))
       AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\\')
@@ -219,7 +219,7 @@ text_results AS (
            ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, query) DESC) AS text_rank
     FROM doc_chunks, websearch_to_tsquery('{cfg.language}', $2) query
     WHERE tsv @@ query
-      AND ($3::text IS NULL OR corpus_id = $3)
+      AND ($3::text[] IS NULL OR corpus_id = ANY($3))
       AND ($4::text[] IS NULL OR category = ANY($4))
       AND ($5::text[] IS NULL OR category != ALL($5))
       AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\\')
@@ -257,7 +257,7 @@ async def search_docs(
     *,
     pool: asyncpg.Pool,
     embedder: "Embedder | None" = None,
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     categories: list[str] | None = None,
     exclude_categories: list[str] | None = None,
     limit: int = 5,
@@ -276,7 +276,7 @@ async def search_docs(
             If None, the default embedder is resolved from the plugin registry.
             Pass a shared embedder (e.g. from an MCP server lifespan) to avoid
             re-instantiating on every call.
-        corpus: Optional corpus slug to filter by. None = search all corpora.
+        corpora: Optional corpus slug list to filter by. None = no corpus filter.
         categories: Optional list of categories to filter ('api', 'guide',
             'example', 'eval', 'other'). None = no filter.
         exclude_categories: Optional list of categories to exclude. None = no filter.
@@ -307,14 +307,14 @@ async def search_docs(
         section_path_prefix = _escape_like(section_path_prefix)
 
     log.debug(
-        "Running hybrid search: query=%r, corpus=%r, categories=%r, "
+        "Running hybrid search: query=%r, corpora=%r, categories=%r, "
         "exclude_categories=%r, limit=%d, offset=%d, min_similarity=%.2f, "
         "source_url_prefix=%r, section_path_prefix=%r",
-        query, corpus, categories, exclude_categories, limit, offset,
+        query, corpora, categories, exclude_categories, limit, offset,
         min_similarity, source_url_prefix, section_path_prefix,
     )
 
-    sql = _build_hybrid_sql(corpus=corpus, config=config)
+    sql = _build_hybrid_sql(corpora=corpora, config=config)
 
     # 2. Run the hybrid SQL
     async with pool.acquire() as conn:
@@ -322,7 +322,7 @@ async def search_docs(
             sql,
             query_vec_str,       # $1 — query vector as string
             query,               # $2 — raw query text for websearch_to_tsquery
-            corpus,              # $3 — corpus_id or None (search all)
+            corpora,              # $3 — corpus_id or None (search all)
             categories,          # $4 — category include array or None
             exclude_categories,  # $5 — category exclude array or None
             source_url_prefix,   # $6 — source URL prefix (pre-escaped) or None
@@ -355,7 +355,7 @@ async def search_docs(
         for row in rows
     ]
 
-    results = [r for r in raw_results if r.similarity >= min_similarity]
+    results = [r for r in raw_results if r.similarity >= min_similarity or r.similarity == 0.0]
 
     if not results:
         log.debug("No results met min_similarity=%.2f threshold", min_similarity)
@@ -373,7 +373,7 @@ async def search_docs(
 async def _search_docs_with_pool(
     query: str,
     *,
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     categories: list[str] | None = None,
     exclude_categories: list[str] | None = None,
     limit: int = 5,
@@ -393,7 +393,7 @@ async def _search_docs_with_pool(
             query,
             pool=pool,
             embedder=embedder,
-            corpus=corpus,
+            corpora=corpora,
             categories=categories,
             exclude_categories=exclude_categories,
             limit=limit,
@@ -410,7 +410,7 @@ async def _search_docs_with_pool(
 def search_docs_sync(
     query: str,
     *,
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     categories: list[str] | None = None,
     exclude_categories: list[str] | None = None,
     limit: int = 5,
@@ -434,7 +434,7 @@ def search_docs_sync(
     return asyncio.run(
         _search_docs_with_pool(
             query,
-            corpus=corpus,
+            corpora=corpora,
             categories=categories,
             exclude_categories=exclude_categories,
             limit=limit,
@@ -459,9 +459,11 @@ def build_search_parser(parser: argparse.ArgumentParser | None = None) -> argpar
     parser.add_argument("query", help="Search query")
     parser.add_argument(
         "--corpus",
-        default=None,
+        action="append",
+        dest="corpora",
+        required=True,
         metavar="SLUG",
-        help="Corpus slug to search (default: search all corpora)",
+        help="Corpus slug to search. Repeat to search multiple corpora.",
     )
     parser.add_argument(
         "--category",
@@ -558,7 +560,7 @@ def handle_search_args(args: argparse.Namespace) -> None:
 
     results = search_docs_sync(
         args.query,
-        corpus=args.corpus,
+        corpora=args.corpora,
         categories=args.categories,
         exclude_categories=args.exclude_categories,
         limit=args.limit,
@@ -599,8 +601,7 @@ def handle_search_args(args: argparse.Namespace) -> None:
         return
 
     print(f"\nSearch results for: {args.query!r}")
-    if args.corpus:
-        print(f"Corpus: {args.corpus}")
+    print(f"Corpora: {', '.join(args.corpora)}")
     print(f"{'─' * 70}")
     for i, r in enumerate(results, 1):
         print(f"\n[{i}] {r.heading}")

@@ -42,4 +42,4 @@ Use this file to track the current installed shape of a doc-hub deployment.
 - Database target used for verification: local VectorChord PostgreSQL on `localhost:5433`
 - DB connection mode used for verification: durable machine-wide env file at `/home/joenathan/.local/share/doc-hub/env`
 - MCP mode observed on this machine: user systemd SSE service at `doc-hub-mcp.service` using `/home/joenathan/.local/bin/doc-hub serve mcp --transport sse --port 8340`
-- Notes: CLI bootstrap also falls back to `/home/joenathan/.local/share/doc-hub/env` when no repo-local `.env` is present
+- Notes: CLI bootstrap also falls back to `/home/joenathan/.local/share/doc-hub/env` when no repo-local `.env` is present; bundled manpage is reachable through `doc-hub docs man`; bare `man doc-hub` depends on the uv tool man directory being present on `MANPATH`

@@ -6,6 +6,7 @@ The embedder plugin and asyncpg pool are mocked throughout.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 from dataclasses import asdict
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -239,8 +240,8 @@ class TestBuildHybridSQL:
 
     def test_has_corpus_id_filter(self):
         sql = _build_hybrid_sql()
-        # $3 is the corpus_id parameter
-        assert "$3::text IS NULL OR corpus_id = $3" in sql
+        # $3 is the corpus_id array parameter
+        assert "$3::text[] IS NULL OR corpus_id = ANY($3)" in sql
 
     def test_has_category_include_filter(self):
         sql = _build_hybrid_sql()
@@ -441,6 +442,7 @@ class TestSearchDocs:
         rows = [
             _make_row(id=1, vec_similarity=0.80),
             _make_row(id=2, vec_similarity=0.10),  # low — should be filtered in Python
+            _make_row(id=3, vec_similarity=0.0, rrf_score=0.028),  # text-only result should survive
         ]
         pool = _make_pool(rows)
         embedder = _make_mock_embedder()
@@ -451,9 +453,10 @@ class TestSearchDocs:
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         assert mock_conn.fetch.call_count == 1
 
-        # Only the high-similarity result survived Python post-filter
-        assert len(results) == 1
-        assert results[0].id == 1
+        ids = [result.id for result in results]
+        assert 1 in ids
+        assert 2 not in ids
+        assert 3 in ids
 
     @pytest.mark.asyncio
     async def test_empty_results_when_all_below_threshold(self):
@@ -467,25 +470,25 @@ class TestSearchDocs:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_corpus_filter_passed_to_sql(self):
-        """The corpus parameter must be passed as $3 to the SQL query."""
+    async def test_corpora_filter_passed_to_sql(self):
+        """The corpora parameter must be passed as $3 to the SQL query."""
         pool = _make_pool([])
         embedder = _make_mock_embedder()
 
-        await search_docs("query", pool=pool, embedder=embedder, corpus="pydantic-ai")
+        await search_docs("query", pool=pool, embedder=embedder, corpora=["pydantic-ai", "fastapi"])
 
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         call_args = mock_conn.fetch.call_args
         positional_args = call_args[0]
-        assert positional_args[3] == "pydantic-ai"  # $3
+        assert positional_args[3] == ["pydantic-ai", "fastapi"]  # $3
 
     @pytest.mark.asyncio
-    async def test_corpus_none_passes_null_to_sql(self):
-        """corpus=None should pass None as $3 (search all corpora)."""
+    async def test_corpora_none_passes_null_to_sql(self):
+        """corpora=None should pass None as $3."""
         pool = _make_pool([])
         embedder = _make_mock_embedder()
 
-        await search_docs("query", pool=pool, embedder=embedder, corpus=None)
+        await search_docs("query", pool=pool, embedder=embedder, corpora=None)
 
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         call_args = mock_conn.fetch.call_args
@@ -622,8 +625,8 @@ class TestSearchDocs:
         assert abs(results[0].score - 0.0423) < 1e-9
 
     @pytest.mark.asyncio
-    async def test_cross_corpus_search_no_corpus_filter(self):
-        """When corpus=None, all corpora are searched (NULL passed as $3)."""
+    async def test_multi_corpus_search_preserves_cross_corpus_results(self):
+        """When multiple corpora are requested, results may come from each requested corpus."""
         rows = [
             _make_row(id=1, corpus_id="corpus-a", vec_similarity=0.90),
             _make_row(id=2, corpus_id="corpus-b", vec_similarity=0.85),
@@ -631,7 +634,12 @@ class TestSearchDocs:
         pool = _make_pool(rows)
         embedder = _make_mock_embedder()
 
-        results = await search_docs("query", pool=pool, embedder=embedder, corpus=None)
+        results = await search_docs(
+            "query",
+            pool=pool,
+            embedder=embedder,
+            corpora=["corpus-a", "corpus-b"],
+        )
 
         corpus_ids = {r.corpus_id for r in results}
         assert "corpus-a" in corpus_ids
@@ -696,7 +704,7 @@ class TestSQLBindParameterOrder:
 
     def test_corpus_is_third_param(self):
         sql = _build_hybrid_sql()
-        assert "$3::text IS NULL OR corpus_id = $3" in sql
+        assert "$3::text[] IS NULL OR corpus_id = ANY($3)" in sql
 
     def test_categories_is_fourth_param(self):
         sql = _build_hybrid_sql()
@@ -728,6 +736,48 @@ class TestSQLBindParameterOrder:
 # ---------------------------------------------------------------------------
 # CLI entry point (basic smoke test)
 # ---------------------------------------------------------------------------
+
+
+class TestCLIParsing:
+    def test_search_requires_at_least_one_corpus(self):
+        from doc_hub.search import build_search_parser
+
+        parser = build_search_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["retry logic"])
+
+    def test_search_accepts_multiple_corpora(self):
+        from doc_hub.search import build_search_parser
+
+        parser = build_search_parser()
+        args = parser.parse_args(["--corpus", "pydantic-ai", "--corpus", "fastapi", "retry logic"])
+
+        assert args.corpora == ["pydantic-ai", "fastapi"]
+
+    def test_handle_search_args_passes_corpora_to_search(self):
+        from doc_hub.search import handle_search_args
+
+        args = argparse.Namespace(
+            query="retry logic",
+            corpora=["pydantic-ai", "fastapi"],
+            categories=None,
+            exclude_categories=None,
+            limit=5,
+            offset=0,
+            min_similarity=0.55,
+            source_url_prefix=None,
+            section_path_prefix=None,
+            vector_limit=None,
+            text_limit=None,
+            rrfk=None,
+            language=None,
+            json=False,
+        )
+
+        with patch("doc_hub.search.search_docs_sync", return_value=[] ) as mock_search:
+            handle_search_args(args)
+
+        assert mock_search.call_args.kwargs["corpora"] == ["pydantic-ai", "fastapi"]
 
 
 class TestCLIMain:

@@ -30,9 +30,11 @@ Verify:
 ```bash
 doc-hub --help
 man doc-hub
+# fallback if your shell has not picked up the installed manpath yet
+doc-hub docs man
 ```
 
-`man doc-hub` is the concise local reference for the installed CLI.
+`man doc-hub` is the concise local reference for the installed CLI. `doc-hub docs man` is the built-in fallback that prints the bundled manpage text directly.
 
 The supported command surface is the unified `doc-hub` CLI. Older pre-unification wrappers such as `doc-hub-search`, `doc-hub-pipeline`, `doc-hub-eval`, `doc-hub-sync-all`, and `doc-hub-mcp` should not remain on your PATH.
 
@@ -93,7 +95,11 @@ doc-hub pipeline run --corpus pydantic-ai
 ### 4. Search
 
 ```bash
-doc-hub docs search "how do I handle retries?" --corpus pydantic-ai
+doc-hub docs search --corpus pydantic-ai "how do I handle retries?"
+
+# Search multiple corpora
+
+doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 ```
 
 ## CLI reference
@@ -101,9 +107,10 @@ doc-hub docs search "how do I handle retries?" --corpus pydantic-ai
 | Command | Description |
 |--------|-------------|
 | `doc-hub docs list` | List registered corpora |
-| `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus |
-| `doc-hub docs read` | Read a document or section |
-| `doc-hub docs search` | Hybrid search CLI |
+| `doc-hub docs man` | Print the bundled manpage text |
+| `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus, including short document IDs |
+| `doc-hub docs read` | Read a document or section by path or short document ID |
+| `doc-hub docs search` | Hybrid search CLI across one or more required `--corpus` values |
 | `doc-hub pipeline run` | Run the fetch → parse → embed → index → tree pipeline for a corpus |
 | `doc-hub pipeline sync-all` | Run the pipeline for all enabled corpora |
 | `doc-hub pipeline eval` | Evaluate retrieval quality |
@@ -205,7 +212,7 @@ from doc_hub.db import create_pool
 
 async def main():
     pool = await create_pool()
-    results = await search_docs("how do I define a tool?", pool=pool, corpus="pydantic-ai")
+    results = await search_docs("how do I define a tool?", pool=pool, corpora=["pydantic-ai"])
     for r in results:
         print(f"{r.heading} (sim={r.similarity:.3f})")
     await pool.close()
