@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from pathlib import Path
 
 from doc_hub.browse import browse, build_browse_parser, build_read_parser, read
 from doc_hub.db import create_pool, ensure_schema, list_corpora
@@ -19,6 +20,11 @@ def handle_read(args: argparse.Namespace) -> None:
 
 def handle_search(args: argparse.Namespace) -> None:
     handle_search_args(args)
+
+
+def handle_man(args: argparse.Namespace) -> None:
+    manpage = Path(__file__).resolve().parents[3] / "man" / "doc-hub.1"
+    print(manpage.read_text(), end="")
 
 
 async def list_docs(args: argparse.Namespace) -> None:
@@ -68,6 +74,9 @@ def register_docs_group(subparsers: argparse._SubParsersAction) -> None:
     read_parser = docs_subparsers.add_parser("read", help="Read a document")
     build_read_parser(read_parser)
     read_parser.set_defaults(handler=handle_read)
+
+    man_parser = docs_subparsers.add_parser("man", help="Print the bundled manpage")
+    man_parser.set_defaults(handler=handle_man)
 
     list_parser = docs_subparsers.add_parser("list", help="List registered corpora")
     list_parser.add_argument("--json", action="store_true", help="Emit JSON output")

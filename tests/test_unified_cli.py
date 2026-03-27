@@ -62,6 +62,16 @@ def test_docs_list_emits_json_output(capsys):
     ]
 
 
+def test_docs_man_prints_bundled_manpage_output(capsys):
+    from doc_hub.cli.main import main
+
+    main(["docs", "man"])
+
+    output = capsys.readouterr().out
+    assert "doc-hub docs list" in output
+    assert "List registered corpora." in output
+
+
 def test_docs_search_routes_to_search_handler():
     from doc_hub.cli.main import main
 
