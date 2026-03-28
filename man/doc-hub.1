@@ -12,8 +12,8 @@ Keep to the top-level command tree and use the examples below as a quick referen
 .B doc-hub docs list
 List registered corpora.
 .TP
-.B doc-hub docs man
-Print the bundled manpage text directly.
+.B doc-hub man
+Print the built-in manual page.
 .TP
 .B doc-hub docs search --corpus CORPUS [--corpus CORPUS ...] "QUERY"
 Search one or more corpora.
@@ -24,8 +24,21 @@ Browse persisted corpus documents and short IDs.
 .B doc-hub docs read CORPUS DOC_PATH_OR_ID
 Read a document by path or short document ID.
 .TP
+.B doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [--url URL] [--path PATH] [--slug SLUG] [--no-index] [--url-pattern PATTERN] [--base-url URL] [--workers N] [--retries N] [--branch BRANCH] [--docs-dir DIR]
+Register a new documentation corpus and run the full indexing pipeline.
+The name is required (positional).
+The \fB\-\-strategy\fR flag selects the fetcher plugin.
+Strategy-specific flags: \fB\-\-url\fR (required for llms_txt, sitemap, git_repo),
+\fB\-\-path\fR (required for local_dir).
+A slug is auto-derived from the name unless \fB\-\-slug\fR is provided.
+Use \fB\-\-no-index\fR to register without running the pipeline.
+.TP
 .B doc-hub pipeline run --corpus CORPUS
 Run the pipeline against a corpus.
+.TP
+.B doc-hub pipeline logs <slug>
+Run the indexing pipeline for an existing corpus with visible log output.
+Useful for monitoring pipeline progress and diagnosing issues.
 .TP
 .B doc-hub serve mcp
 Start the MCP server.
@@ -43,7 +56,7 @@ Show the bundled CLI reference text directly:
 .PP
 .RS
 .nf
-doc-hub docs man
+doc-hub man
 .fi
 .RE
 .PP
@@ -73,11 +86,35 @@ doc-hub docs read pydantic-ai abc123
 .fi
 .RE
 .PP
+Register a new corpus and index it:
+.PP
+.RS
+.nf
+doc-hub pipeline add "Pydantic AI" --strategy llms_txt --url https://ai.pydantic.dev/llms.txt
+.fi
+.RE
+.PP
+Register a local directory corpus without indexing:
+.PP
+.RS
+.nf
+doc-hub pipeline add "My Docs" --strategy local_dir --path ./docs --no-index
+.fi
+.RE
+.PP
 Run the pipeline for one corpus:
 .PP
 .RS
 .nf
 doc-hub pipeline run --corpus pydantic-ai
+.fi
+.RE
+.PP
+Run the pipeline with visible logs:
+.PP
+.RS
+.nf
+doc-hub pipeline logs pydantic-ai
 .fi
 .RE
 .PP
@@ -96,5 +133,3 @@ Overrides the local data directory used for the database and env file.
 .TP
 .I $DOC_HUB_DATA_DIR/env
 Optional local environment overrides loaded by the CLI.
-.SH SEE ALSO
-.BR man (1)

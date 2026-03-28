@@ -6,13 +6,26 @@ The canonical command surface for doc-hub is a single executable:
 doc-hub ...
 ```
 
-For a concise local reference after install, use `man doc-hub`. If your shell has not picked up the installed manpath yet, use `doc-hub docs man` to print the bundled manpage directly.
+For a concise local reference after install, use `man doc-hub`. If your shell has not picked up the installed manpath yet, use `doc-hub man` to print the bundled manpage directly.
 
-The command tree is organized into three groups:
+The command tree is organized into three groups plus a top-level manual command:
 
+- `doc-hub man` — print the built-in manual page
 - `doc-hub docs ...`
 - `doc-hub pipeline ...`
 - `doc-hub serve ...`
+
+---
+
+## `doc-hub man`
+
+Print the built-in manual page.
+
+```bash
+doc-hub man
+```
+
+Use this when you want the same concise reference content as `man doc-hub` but your shell environment has not picked up the installed manpath yet.
 
 ---
 
@@ -39,18 +52,6 @@ doc-hub docs list
 # Machine-readable output
 doc-hub docs list --json
 ```
-
----
-
-## `doc-hub docs man`
-
-Print the bundled manpage text directly.
-
-```bash
-doc-hub docs man
-```
-
-Use this when you want the same concise reference content as `man doc-hub` but your shell environment has not picked up the installed manpath yet.
 
 ---
 
@@ -214,6 +215,66 @@ doc-hub pipeline run --corpus pydantic-ai --stage fetch
 
 # Rebuild only the persisted document tree
 doc-hub pipeline run --corpus pydantic-ai --stage tree
+```
+
+---
+
+## `doc-hub pipeline add`
+
+Register a new documentation corpus and run the indexing pipeline.
+
+```bash
+doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [options]
+```
+
+### Arguments and flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `name` | string | **required** | Human-readable corpus name (positional). |
+| `--strategy` | choice | **required** | Fetcher plugin. Choices: `llms_txt`, `sitemap`, `git_repo`, `local_dir`. |
+| `--url URL` | string | none | URL for `llms_txt`, `sitemap`, or `git_repo` strategies. |
+| `--path PATH` | string | none | Local directory path for the `local_dir` strategy. |
+| `--slug SLUG` | string | slugified name | Override the auto-derived slug. |
+| `--no-index` | flag | false | Register the corpus only; skip the pipeline run. |
+| `--url-pattern PATTERN` | string | none | URL pattern filter (llms_txt only). |
+| `--base-url URL` | string | none | Base URL override (llms_txt only). |
+| `--workers N` | int | 20 | Download concurrency (llms_txt only). |
+| `--retries N` | int | 3 | HTTP retry count per URL (llms_txt only). |
+| `--branch BRANCH` | string | none | Git branch to check out (git_repo only). |
+| `--docs-dir DIR` | string | none | Subdirectory containing docs (git_repo only). |
+
+### Examples
+
+```bash
+# Register and index a corpus from an llms.txt file
+doc-hub pipeline add "Pydantic AI" --strategy llms_txt --url https://ai.pydantic.dev/llms.txt
+
+# Register a local directory corpus without running the pipeline
+doc-hub pipeline add "My Docs" --strategy local_dir --path ./my-docs --no-index
+```
+
+---
+
+## `doc-hub pipeline logs`
+
+Run the pipeline for an existing corpus with visible log output.
+
+```bash
+doc-hub pipeline logs <slug>
+```
+
+### Arguments
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `slug` | string | **required** | Corpus slug (positional). |
+
+### Examples
+
+```bash
+# Run the pipeline with visible logs
+doc-hub pipeline logs pydantic-ai
 ```
 
 ---

@@ -31,10 +31,10 @@ Verify:
 doc-hub --help
 man doc-hub
 # fallback if your shell has not picked up the installed manpath yet
-doc-hub docs man
+doc-hub man
 ```
 
-`man doc-hub` is the concise local reference for the installed CLI. `doc-hub docs man` is the built-in fallback that prints the bundled manpage text directly.
+`man doc-hub` is the concise local reference for the installed CLI. `doc-hub man` is the built-in fallback that prints the bundled manpage text directly.
 
 The supported command surface is the unified `doc-hub` CLI. Older pre-unification wrappers such as `doc-hub-search`, `doc-hub-pipeline`, `doc-hub-eval`, `doc-hub-sync-all`, and `doc-hub-mcp` should not remain on your PATH.
 
@@ -106,12 +106,14 @@ doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 
 | Command | Description |
 |--------|-------------|
+| `doc-hub man` | Print the built-in manual page |
 | `doc-hub docs list` | List registered corpora |
-| `doc-hub docs man` | Print the bundled manpage text |
 | `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus, including short document IDs |
 | `doc-hub docs read` | Read a document or section by path or short document ID |
 | `doc-hub docs search` | Hybrid search CLI across one or more required `--corpus` values |
+| `doc-hub pipeline add` | Register and index a new corpus (e.g. `--strategy llms_txt --url <url>`) |
 | `doc-hub pipeline run` | Run the fetch → parse → embed → index → tree pipeline for a corpus |
+| `doc-hub pipeline logs` | View pipeline run output for a corpus |
 | `doc-hub pipeline sync-all` | Run the pipeline for all enabled corpora |
 | `doc-hub pipeline eval` | Evaluate retrieval quality |
 | `doc-hub serve mcp` | Start the MCP server |
