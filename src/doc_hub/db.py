@@ -463,6 +463,27 @@ async def upsert_corpus(pool: asyncpg.Pool, corpus) -> None:
     log.debug("Upserted corpus: %s", corpus.slug)
 
 
+async def update_corpus_fetch_config(
+    pool: asyncpg.Pool, slug: str, fetch_config: dict,
+) -> None:
+    """Update just the fetch_config JSONB column for a corpus.
+
+    Used by ``pipeline clean`` to persist ``clean: true`` so that future
+    fetches automatically apply the LLM cleaning step.
+
+    Args:
+        pool:         asyncpg connection pool.
+        slug:         Corpus slug (primary key).
+        fetch_config: New fetch_config dict to store.
+    """
+    await pool.execute(
+        "UPDATE doc_corpora SET fetch_config = $1::jsonb WHERE slug = $2",
+        json.dumps(fetch_config),
+        slug,
+    )
+    log.debug("Updated fetch_config for corpus: %s", slug)
+
+
 async def update_corpus_stats(pool: asyncpg.Pool, slug: str, total_chunks: int) -> None:
     """Update post-indexing stats for a corpus.
 

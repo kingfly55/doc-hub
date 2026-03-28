@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=2.0",
     "aiohttp>=3.9",
     "pgvector>=0.3",
+    "openai>=1.0",
     "python-dotenv>=1.0",
     "mcp>=1.26",
 ]

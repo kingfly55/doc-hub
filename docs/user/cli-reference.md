@@ -256,6 +256,48 @@ doc-hub pipeline add "My Docs" --strategy local_dir --path ./my-docs --no-index
 
 ---
 
+## `doc-hub pipeline clean`
+
+Clean fetched markdown files for a corpus via an LLM. Strips navigation menus, footers, breadcrumbs, and other scraping artifacts while preserving documentation content.
+
+```bash
+doc-hub pipeline clean <slug>
+```
+
+### Arguments
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `slug` | string | **required** | Corpus slug (positional). |
+
+### Behavior
+
+1. Loads the corpus manifest and identifies files where `content_hash != clean_hash` (changed since last clean or never cleaned).
+2. Sends each file through an OpenAI-compatible LLM to strip navigation, footers, and artifacts.
+3. Writes cleaned content back to disk and updates the manifest with `clean_hash` values.
+4. Sets `clean: true` in the corpus's `fetch_config` so future fetches auto-clean.
+
+### Required environment variables
+
+| Variable | Description |
+|---|---|
+| `DOC_HUB_CLEAN_MODEL` | Model slug (e.g. `gpt-4o-mini`, `claude-sonnet-4-20250514`) |
+| `DOC_HUB_CLEAN_API_KEY` | API key for the endpoint |
+| `DOC_HUB_CLEAN_BASE_URL` | Base URL (e.g. `https://api.openai.com/v1`) |
+| `DOC_HUB_CLEAN_PROMPT` | Optional system prompt override (has a built-in default) |
+
+### Examples
+
+```bash
+# Clean a corpus
+doc-hub pipeline clean camoufox
+
+# Future fetches for this corpus will auto-clean
+doc-hub pipeline logs camoufox
+```
+
+---
+
 ## `doc-hub pipeline logs`
 
 Run the pipeline for an existing corpus with visible log output.

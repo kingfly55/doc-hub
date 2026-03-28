@@ -57,6 +57,18 @@ EOF
 
 For installed CLI usage, `doc-hub man` does not require DB or Gemini credentials and is the built-in fallback when `man doc-hub` is unavailable because the shell has not picked up the tool-installed manpath yet.
 
+## Optional: LLM cleaning
+
+Required only when using `doc-hub pipeline clean` or auto-clean during fetch:
+
+```bash
+export DOC_HUB_CLEAN_MODEL=gpt-4o-mini
+export DOC_HUB_CLEAN_API_KEY=sk-your-key
+export DOC_HUB_CLEAN_BASE_URL=https://api.openai.com/v1
+# Optional: override the default cleaning prompt
+# export DOC_HUB_CLEAN_PROMPT="Your custom prompt"
+```
+
 ## Verify env state
 
 ```bash

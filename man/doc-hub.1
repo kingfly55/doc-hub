@@ -33,6 +33,13 @@ Strategy-specific flags: \fB\-\-url\fR (required for llms_txt, sitemap, git_repo
 A slug is auto-derived from the name unless \fB\-\-slug\fR is provided.
 Use \fB\-\-no-index\fR to register without running the pipeline.
 .TP
+.B doc-hub pipeline clean <slug>
+Clean fetched markdown for a corpus via an LLM.
+Strips navigation, footers, breadcrumbs, and scraping artifacts while preserving content.
+Only processes files that have changed since the last clean.
+After the first run, sets \fBclean=true\fR in the corpus fetch config so future fetches auto-clean.
+Requires \fBDOC_HUB_CLEAN_MODEL\fR, \fBDOC_HUB_CLEAN_API_KEY\fR, and \fBDOC_HUB_CLEAN_BASE_URL\fR.
+.TP
 .B doc-hub pipeline run --corpus CORPUS
 Run the pipeline against a corpus.
 .TP
@@ -125,10 +132,30 @@ Start the MCP server:
 doc-hub serve mcp
 .fi
 .RE
+.PP
+Clean fetched documents for a corpus:
+.PP
+.RS
+.nf
+doc-hub pipeline clean camoufox
+.fi
+.RE
 .SH ENVIRONMENT
 .TP
 .B DOC_HUB_DATA_DIR
 Overrides the local data directory used for the database and env file.
+.TP
+.B DOC_HUB_CLEAN_MODEL
+Model slug for the OpenAI-compatible API used by \fBpipeline clean\fR.
+.TP
+.B DOC_HUB_CLEAN_API_KEY
+API key for the LLM cleaning endpoint.
+.TP
+.B DOC_HUB_CLEAN_BASE_URL
+Base URL for the OpenAI-compatible API.
+.TP
+.B DOC_HUB_CLEAN_PROMPT
+Optional system prompt override for the cleaning LLM. Falls back to a built-in default.
 .SH FILES
 .TP
 .I $DOC_HUB_DATA_DIR/env

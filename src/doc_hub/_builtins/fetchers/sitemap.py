@@ -259,6 +259,16 @@ class SitemapFetcher:
                 upstream_urls, base_url, output_dir, api_key, workers, retries,
             )
 
+        # 5b. Write manifest before cleaning so clean_corpus can read it
+        write_manifest(download_results, output_dir, sections=sections)
+
+        # 5c. LLM cleaning (opt-in via fetch_config["clean"])
+        if fetch_config.get("clean") and download_results:
+            from doc_hub.clean import clean_corpus  # noqa: PLC0415
+
+            log.info("[%s] Running LLM cleaning on fetched pages", corpus_slug)
+            await clean_corpus(output_dir, workers=workers)
+
         # 6. Log sync summary
         new_count = 0
         changed_count = 0
@@ -279,8 +289,5 @@ class SitemapFetcher:
             "[%s] Sync complete: %d new, %d changed, %d unchanged, %d failed, %d removed",
             corpus_slug, new_count, changed_count, unchanged_count, fail, len(removed_filenames),
         )
-
-        # 7. Write manifest
-        write_manifest(download_results, output_dir, sections=sections)
 
         return output_dir

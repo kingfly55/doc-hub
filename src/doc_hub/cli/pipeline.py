@@ -102,6 +102,54 @@ def handle_logs(args: argparse.Namespace) -> None:
     asyncio.run(_logs())
 
 
+def handle_clean(args: argparse.Namespace) -> None:
+    async def _clean() -> None:
+        from doc_hub.clean import clean_corpus, get_clean_config  # noqa: PLC0415
+        from doc_hub.db import (  # noqa: PLC0415
+            create_pool,
+            ensure_schema,
+            get_corpus,
+            update_corpus_fetch_config,
+        )
+        from doc_hub.paths import raw_dir  # noqa: PLC0415
+
+        pool = await create_pool()
+        try:
+            await ensure_schema(pool)
+            corpus = await get_corpus(pool, args.slug)
+            if corpus is None:
+                print(f"Error: corpus '{args.slug}' not found", file=sys.stderr)
+                raise SystemExit(1)
+
+            # Validate env vars early
+            get_clean_config()
+
+            output = raw_dir(corpus)
+            if not output.exists():
+                print(
+                    f"Error: no fetched data for corpus '{args.slug}'. "
+                    "Run the pipeline fetch stage first.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+
+            results = await clean_corpus(output)
+
+            ok = sum(1 for r in results if r.success)
+            fail = sum(1 for r in results if not r.success)
+            print(f"Clean complete: {ok} succeeded, {fail} failed")
+
+            # Make cleaning sticky for future fetches
+            if not corpus.fetch_config.get("clean"):
+                corpus.fetch_config["clean"] = True
+                await update_corpus_fetch_config(pool, corpus.slug, corpus.fetch_config)
+                print(f"Set clean=true in fetch_config for '{corpus.slug}' — future fetches will auto-clean")
+        finally:
+            await pool.close()
+
+    asyncio.run(_clean())
+
+
 def handle_run(args: argparse.Namespace) -> None:
     handle_pipeline_run_args(args)
 
@@ -149,6 +197,12 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--branch", default=None, help="Git branch (git_repo)")
     add_parser.add_argument("--docs-dir", default=None, help="Docs subdirectory in repo (git_repo)")
     add_parser.set_defaults(handler=handle_add)
+
+    clean_parser = pipeline_subparsers.add_parser(
+        "clean", help="Clean fetched markdown via LLM (strips nav, footers, artifacts)",
+    )
+    clean_parser.add_argument("slug", help="Corpus slug")
+    clean_parser.set_defaults(handler=handle_clean)
 
     logs_parser = pipeline_subparsers.add_parser("logs", help="Run pipeline with visible logs for a corpus")
     logs_parser.add_argument("slug", help="Corpus slug")

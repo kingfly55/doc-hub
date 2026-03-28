@@ -30,6 +30,10 @@ That means explicit shell exports still win, repo-local `.env` files still work 
 | `DOC_HUB_DATA_DIR` | See below | No | Override data root directory |
 | `XDG_DATA_HOME` | — | No | XDG base data dir — used if `DOC_HUB_DATA_DIR` is not set |
 | `DOC_HUB_EVAL_DIR` | See below | No | Override eval file directory |
+| `DOC_HUB_CLEAN_MODEL` | — | When cleaning | Model slug for the LLM cleaning endpoint |
+| `DOC_HUB_CLEAN_API_KEY` | — | When cleaning | API key for the LLM cleaning endpoint |
+| `DOC_HUB_CLEAN_BASE_URL` | — | When cleaning | Base URL for the OpenAI-compatible API |
+| `DOC_HUB_CLEAN_PROMPT` | Built-in default | No | System prompt override for the cleaning LLM |
 | `LOGLEVEL` | — | No | Set to `DEBUG` for verbose output from `doc-hub docs search` and `doc-hub pipeline eval` |
 
 ¹ Either `DOC_HUB_DATABASE_URL` or `PGPASSWORD` must be set. If neither is set, `_build_dsn()` raises `RuntimeError`.
@@ -152,6 +156,44 @@ export DOC_HUB_EMBED_SLEEP=5.0    # 5-second pause between batches
 ```
 
 This variable overrides the `inter_batch_sleep` parameter in `embed_chunks()` (`embed.py:253`).
+
+---
+
+## LLM cleaning configuration
+
+The `doc-hub pipeline clean` command and auto-clean during fetch use an OpenAI-compatible LLM to strip navigation, footers, and scraping artifacts from fetched markdown. These variables are only required when cleaning is triggered.
+
+### `DOC_HUB_CLEAN_MODEL` (required when cleaning)
+
+The model slug to use for cleaning requests. Any model available at your configured endpoint works.
+
+```bash
+export DOC_HUB_CLEAN_MODEL="gpt-4o-mini"
+```
+
+### `DOC_HUB_CLEAN_API_KEY` (required when cleaning)
+
+API key for the OpenAI-compatible endpoint.
+
+```bash
+export DOC_HUB_CLEAN_API_KEY="sk-..."
+```
+
+### `DOC_HUB_CLEAN_BASE_URL` (required when cleaning)
+
+Base URL for the API. Works with any OpenAI-compatible endpoint (OpenAI, OpenRouter, local LLMs, etc.).
+
+```bash
+export DOC_HUB_CLEAN_BASE_URL="https://api.openai.com/v1"
+```
+
+### `DOC_HUB_CLEAN_PROMPT` (optional)
+
+Override the system prompt sent to the LLM. When unset, a built-in prompt is used that strips navigation, footers, breadcrumbs, and scraping artifacts while preserving all documentation content verbatim.
+
+```bash
+export DOC_HUB_CLEAN_PROMPT="Your custom cleaning instructions here"
+```
 
 ---
 
