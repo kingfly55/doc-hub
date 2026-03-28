@@ -63,10 +63,10 @@ def test_docs_list_emits_json_output(capsys):
     ]
 
 
-def test_docs_man_prints_bundled_manpage_output(capsys):
+def test_man_prints_bundled_manpage_output(capsys):
     from doc_hub.cli.main import main
 
-    main(["docs", "man"])
+    main(["man"])
 
     output = capsys.readouterr().out
     assert "doc-hub docs list" in output
@@ -82,16 +82,16 @@ def test_docs_search_routes_to_search_handler():
     mock_handler.assert_called_once()
 
 
-def test_docs_man_routes_to_man_handler():
+def test_man_routes_to_man_handler():
     from doc_hub.cli.main import main
 
-    with patch("doc_hub.cli.docs.handle_man") as mock_handler:
-        main(["docs", "man"])
+    with patch("doc_hub.cli.main.handle_man") as mock_handler:
+        main(["man"])
 
     mock_handler.assert_called_once()
 
 
-def test_docs_man_prints_bundled_manpage(capsys):
+def test_man_prints_bundled_manpage(capsys):
     from doc_hub.cli.docs import handle_man
 
     handle_man(argparse.Namespace())
@@ -99,15 +99,15 @@ def test_docs_man_prints_bundled_manpage(capsys):
     out = capsys.readouterr().out
     assert "COMMANDS" in out
     assert "doc-hub docs list" in out
-    assert "doc-hub docs man" in out
+    assert "doc-hub man" in out
     assert "doc-hub docs search --corpus pydantic-ai \"retry logic\"" in out
     assert "doc-hub docs read pydantic-ai abc123" in out
     assert "doc-hub serve mcp" in out
     assert "SEE ALSO" in out
-    assert "man(1)" in out
+    assert "psql" in out
 
 
-def test_docs_man_falls_back_to_installed_manpath(capsys, tmp_path):
+def test_man_falls_back_to_installed_manpath(capsys, tmp_path):
     from doc_hub.cli import docs as docs_module
 
     installed_manpage = tmp_path / "share" / "man" / "man1" / "doc-hub.1"
@@ -164,7 +164,7 @@ def test_doc_hub_manpage_renders():
 
     assert "doc-hub" in result.stdout
     assert "doc-hub docs list" in result.stdout
-    assert "doc-hub docs man" in result.stdout
+    assert "doc-hub man" in result.stdout
     assert "doc-hub docs search --corpus CORPUS" in result.stdout
 
 
@@ -223,3 +223,211 @@ def test_bootstrap_cli_prefers_doc_hub_data_dir_for_global_env(tmp_path, monkeyp
         bootstrap_cli()
 
     assert mock_load_dotenv.call_args_list[1].kwargs == {"dotenv_path": global_env}
+
+
+def test_slugify_basic_cases():
+    from doc_hub.cli.pipeline import slugify
+
+    assert slugify("Pydantic AI") == "pydantic-ai"
+    assert slugify("FastAPI") == "fastapi"
+    assert slugify("My  Great--Docs") == "my-great-docs"
+    assert slugify("  Leading Trailing  ") == "leading-trailing"
+    assert slugify("Anthropic SDK (Python)") == "anthropic-sdk-python"
+
+
+def test_pipeline_add_parses_llms_txt_args():
+    from doc_hub.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "pipeline", "add", "Pydantic AI",
+        "--strategy", "llms_txt",
+        "--url", "https://ai.pydantic.dev/llms.txt",
+    ])
+
+    assert args.command_group == "pipeline"
+    assert args.pipeline_command == "add"
+    assert args.name == "Pydantic AI"
+    assert args.strategy == "llms_txt"
+    assert args.url == "https://ai.pydantic.dev/llms.txt"
+    assert args.slug is None
+    assert args.no_index is False
+
+
+def test_pipeline_add_parses_local_dir_args():
+    from doc_hub.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "pipeline", "add", "My Docs",
+        "--strategy", "local_dir",
+        "--path", "/tmp/docs",
+        "--slug", "my-docs",
+        "--no-index",
+    ])
+
+    assert args.name == "My Docs"
+    assert args.strategy == "local_dir"
+    assert args.path == "/tmp/docs"
+    assert args.slug == "my-docs"
+    assert args.no_index is True
+
+
+def test_pipeline_add_parses_git_repo_args():
+    from doc_hub.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "pipeline", "add", "Anthropic SDK",
+        "--strategy", "git_repo",
+        "--url", "https://github.com/anthropics/anthropic-sdk-python.git",
+        "--branch", "main",
+        "--docs-dir", "docs",
+    ])
+
+    assert args.strategy == "git_repo"
+    assert args.url == "https://github.com/anthropics/anthropic-sdk-python.git"
+    assert args.branch == "main"
+    assert args.docs_dir == "docs"
+
+
+def test_pipeline_add_parses_sitemap_args():
+    from doc_hub.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "pipeline", "add", "FastAPI",
+        "--strategy", "sitemap",
+        "--url", "https://fastapi.tiangolo.com/sitemap.xml",
+    ])
+
+    assert args.strategy == "sitemap"
+    assert args.url == "https://fastapi.tiangolo.com/sitemap.xml"
+
+
+def test_pipeline_add_builds_config_and_upserts_llms_txt():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    config = build_fetch_config("llms_txt", argparse.Namespace(
+        url="https://ai.pydantic.dev/llms.txt",
+        path=None,
+        url_pattern=None,
+        base_url=None,
+        workers=None,
+        retries=None,
+        branch=None,
+        docs_dir=None,
+    ))
+    assert config == {"url": "https://ai.pydantic.dev/llms.txt"}
+
+
+def test_pipeline_add_builds_config_llms_txt_with_optionals():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    config = build_fetch_config("llms_txt", argparse.Namespace(
+        url="https://ai.pydantic.dev/llms.txt",
+        path=None,
+        url_pattern=r"https://ai\.pydantic\.dev/[^\s]+\.md",
+        base_url="https://ai.pydantic.dev/",
+        workers=10,
+        retries=5,
+        branch=None,
+        docs_dir=None,
+    ))
+    assert config == {
+        "url": "https://ai.pydantic.dev/llms.txt",
+        "url_pattern": r"https://ai\.pydantic\.dev/[^\s]+\.md",
+        "base_url": "https://ai.pydantic.dev/",
+        "workers": 10,
+        "retries": 5,
+    }
+
+
+def test_pipeline_add_builds_config_local_dir():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    config = build_fetch_config("local_dir", argparse.Namespace(
+        url=None,
+        path="/tmp/docs",
+        url_pattern=None,
+        base_url=None,
+        workers=None,
+        retries=None,
+        branch=None,
+        docs_dir=None,
+    ))
+    assert config == {"path": "/tmp/docs"}
+
+
+def test_pipeline_add_builds_config_git_repo():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    config = build_fetch_config("git_repo", argparse.Namespace(
+        url="https://github.com/org/repo.git",
+        path=None,
+        url_pattern=None,
+        base_url=None,
+        workers=None,
+        retries=None,
+        branch="main",
+        docs_dir="docs",
+    ))
+    assert config == {
+        "url": "https://github.com/org/repo.git",
+        "branch": "main",
+        "docs_dir": "docs",
+    }
+
+
+def test_pipeline_add_builds_config_sitemap():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    config = build_fetch_config("sitemap", argparse.Namespace(
+        url="https://example.com/sitemap.xml",
+        path=None,
+        url_pattern=None,
+        base_url=None,
+        workers=None,
+        retries=None,
+        branch=None,
+        docs_dir=None,
+    ))
+    assert config == {"url": "https://example.com/sitemap.xml"}
+
+
+def test_pipeline_add_missing_url_raises():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    try:
+        build_fetch_config("llms_txt", argparse.Namespace(
+            url=None,
+            path=None,
+            url_pattern=None,
+            base_url=None,
+            workers=None,
+            retries=None,
+            branch=None,
+            docs_dir=None,
+        ))
+        assert False, "Expected SystemExit"
+    except SystemExit:
+        pass
+
+
+def test_pipeline_add_missing_path_raises():
+    from doc_hub.cli.pipeline import build_fetch_config
+
+    try:
+        build_fetch_config("local_dir", argparse.Namespace(
+            url=None,
+            path=None,
+            url_pattern=None,
+            base_url=None,
+            workers=None,
+            retries=None,
+            branch=None,
+            docs_dir=None,
+        ))
+        assert False, "Expected SystemExit"
+    except SystemExit:
+        pass
