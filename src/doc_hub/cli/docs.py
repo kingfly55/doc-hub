@@ -146,9 +146,6 @@ def register_docs_group(subparsers: argparse._SubParsersAction) -> None:
     list_parser.add_argument("--json", action="store_true", help="Emit JSON output")
     list_parser.set_defaults(handler=handle_list)
 
-    man_parser = docs_subparsers.add_parser("man", help="Show the bundled manpage")
-    man_parser.set_defaults(handler=handle_man)
-
     search_parser = docs_subparsers.add_parser("search", help="Search documentation")
     build_search_parser(search_parser)
     search_parser.set_defaults(handler=handle_search)

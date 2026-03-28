@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from doc_hub.cli.docs import register_docs_group
+from doc_hub.cli.docs import handle_man, register_docs_group
 from doc_hub.cli.pipeline import register_pipeline_group
 from doc_hub.cli.serve import register_serve_group
 from doc_hub.cli.shared import bootstrap_cli
@@ -14,6 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     register_docs_group(subparsers)
     register_pipeline_group(subparsers)
     register_serve_group(subparsers)
+    man_parser = subparsers.add_parser("man", help="Print the built-in manual page")
+    man_parser.set_defaults(handler=handle_man)
     return parser
 
 

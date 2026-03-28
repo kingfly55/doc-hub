@@ -63,12 +63,12 @@ Read a specific document or section. Key flags:
 - `--section SECTION` — read a specific section
 - `--json` — JSON output
 
-### `doc-hub docs man`
+### `doc-hub man`
 Print the full manpage. Use as a self-help escape hatch when confused about CLI syntax.
 
 ## Escape Hatch
 
-If Claude is unsure about any command syntax or available flags, it should run `doc-hub docs man` to get the authoritative CLI reference.
+If Claude is unsure about any command syntax or available flags, it should run `doc-hub man` to get the authoritative CLI reference.
 
 ## Assumptions
 

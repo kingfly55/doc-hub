@@ -4,7 +4,7 @@
 
 ```bash
 doc-hub --help
-doc-hub docs man
+doc-hub man
 doc-hub docs browse --help
 doc-hub docs read --help
 doc-hub docs search --help
@@ -44,7 +44,7 @@ doc-hub pipeline sync-all
 
 ```bash
 # Print bundled CLI reference directly
-doc-hub docs man
+doc-hub man
 
 # Browse and note short document IDs from the output
 doc-hub docs browse <slug>

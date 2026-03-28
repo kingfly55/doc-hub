@@ -46,6 +46,6 @@ Use this file to record durable operational incidents and their fixes.
 ### 2026-03-26 — Installed manpage was present but `man doc-hub` still failed
 - Symptom: `man doc-hub` failed even after the manpage had been packaged and installed with the global uv tool
 - Root cause: the uv tool man directory existed under `/home/joenathan/.local/share/uv/tools/doc-hub/share/man`, but the shell environment did not include that directory on `MANPATH`
-- Fix: added `MANPATH` export blocks in shell startup files so the uv tool man directory is discoverable, and added `doc-hub docs man` as a built-in fallback that prints the bundled manpage without depending on shell manpath configuration
-- Verification: after sourcing the repaired login-shell config, `man doc-hub` succeeded; `doc-hub docs man` also printed the bundled reference text directly
-- Follow-up: if `man doc-hub` fails on another machine, first check whether the tool-installed man directory is on `MANPATH`; use `doc-hub docs man` as the immediate fallback
+- Fix: added `MANPATH` export blocks in shell startup files so the uv tool man directory is discoverable, and added `doc-hub man` as a built-in fallback that prints the bundled manpage without depending on shell manpath configuration
+- Verification: after sourcing the repaired login-shell config, `man doc-hub` succeeded; `doc-hub man` also printed the bundled reference text directly
+- Follow-up: if `man doc-hub` fails on another machine, first check whether the tool-installed man directory is on `MANPATH`; use `doc-hub man` as the immediate fallback
