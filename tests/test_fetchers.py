@@ -6,6 +6,7 @@ Tests target the builtin plugin classes directly.
 
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +27,12 @@ from doc_hub._builtins.fetchers.llms_txt import (
     write_manifest,
 )
 from doc_hub._builtins.fetchers.local_dir import LocalDirFetcher
-from doc_hub._builtins.fetchers.sitemap import SitemapFetcher
+from doc_hub._builtins.fetchers.sitemap import (
+    SitemapFetcher,
+    build_sections_from_urls,
+    html_url_to_filename,
+    parse_sitemap_xml,
+)
 from doc_hub._builtins.fetchers.git_repo import GitRepoFetcher
 from doc_hub.fetchers import DEFAULT_RETRIES as FETCHERS_DEFAULT_RETRIES
 from doc_hub.fetchers import DEFAULT_WORKERS as FETCHERS_DEFAULT_WORKERS
@@ -82,10 +88,12 @@ def test_git_repo_fetcher_conforms_to_protocol():
 
 
 @pytest.mark.asyncio
-async def test_sitemap_fetcher_raises():
+async def test_sitemap_fetcher_raises_without_api_key(tmp_path, monkeypatch):
+    """SitemapFetcher raises ValueError when JINA_API_KEY is not set."""
+    monkeypatch.delenv("JINA_API_KEY", raising=False)
     fetcher = SitemapFetcher()
-    with pytest.raises(NotImplementedError, match="sitemap"):
-        await fetcher.fetch("test-corpus", {}, Path("/tmp"))
+    with pytest.raises(ValueError, match="JINA_API_KEY"):
+        await fetcher.fetch("test-corpus", {"url": "https://example.com/sitemap.xml.gz"}, tmp_path)
 
 
 @pytest.mark.asyncio
@@ -663,3 +671,249 @@ def test_derive_url_pattern_trailing_slash():
     p1 = _derive_url_pattern("https://example.com/")
     p2 = _derive_url_pattern("https://example.com")
     assert p1 == p2
+
+
+# ---------------------------------------------------------------------------
+# SitemapFetcher — html_url_to_filename
+# ---------------------------------------------------------------------------
+
+
+def test_html_url_to_filename_root():
+    """Root URL -> index.md."""
+    assert html_url_to_filename("https://camoufox.com/", "https://camoufox.com/") == "index.md"
+
+
+def test_html_url_to_filename_top_level():
+    """Top-level page."""
+    assert html_url_to_filename("https://camoufox.com/python/", "https://camoufox.com/") == "python.md"
+
+
+def test_html_url_to_filename_nested():
+    """Nested path uses double-underscore separator."""
+    assert html_url_to_filename("https://camoufox.com/python/usage/", "https://camoufox.com/") == "python__usage.md"
+
+
+def test_html_url_to_filename_no_trailing_slash():
+    """URL without trailing slash."""
+    assert html_url_to_filename("https://camoufox.com/fingerprint", "https://camoufox.com/") == "fingerprint.md"
+
+
+def test_html_url_to_filename_deep_nesting():
+    """Three levels deep."""
+    assert html_url_to_filename("https://camoufox.com/a/b/c/", "https://camoufox.com/") == "a__b__c.md"
+
+
+# ---------------------------------------------------------------------------
+# SitemapFetcher — parse_sitemap_xml
+# ---------------------------------------------------------------------------
+
+SAMPLE_SITEMAP_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://camoufox.com/</loc>
+    <lastmod>2026-03-09T03:19:28Z</lastmod>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://camoufox.com/fingerprint/</loc>
+    <lastmod>2026-03-09T03:19:28Z</lastmod>
+    <priority>0.82</priority>
+  </url>
+  <url>
+    <loc>https://camoufox.com/python/</loc>
+    <lastmod>2026-03-09T03:19:28Z</lastmod>
+    <priority>0.77</priority>
+  </url>
+</urlset>"""
+
+
+def test_parse_sitemap_xml_extracts_urls():
+    urls = parse_sitemap_xml(SAMPLE_SITEMAP_XML)
+    assert urls == [
+        "https://camoufox.com/",
+        "https://camoufox.com/fingerprint/",
+        "https://camoufox.com/python/",
+    ]
+
+
+def test_parse_sitemap_xml_empty():
+    xml = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+    assert parse_sitemap_xml(xml) == []
+
+
+def test_parse_sitemap_xml_deduplicates():
+    xml = """\
+<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/a/</loc></url>
+  <url><loc>https://example.com/a/</loc></url>
+  <url><loc>https://example.com/b/</loc></url>
+</urlset>"""
+    assert parse_sitemap_xml(xml) == [
+        "https://example.com/a/",
+        "https://example.com/b/",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# SitemapFetcher — build_sections_from_urls
+# ---------------------------------------------------------------------------
+
+
+def test_build_sections_groups_by_first_segment():
+    urls = [
+        "https://camoufox.com/",
+        "https://camoufox.com/python/",
+        "https://camoufox.com/python/usage/",
+        "https://camoufox.com/fingerprint/",
+    ]
+    sections = build_sections_from_urls(urls, "https://camoufox.com/")
+    assert sections == [
+        {"title": "", "heading_level": 0, "urls": ["https://camoufox.com/"]},
+        {"title": "python", "heading_level": 2, "urls": [
+            "https://camoufox.com/python/",
+            "https://camoufox.com/python/usage/",
+        ]},
+        {"title": "fingerprint", "heading_level": 2, "urls": [
+            "https://camoufox.com/fingerprint/",
+        ]},
+    ]
+
+
+def test_build_sections_no_root():
+    urls = [
+        "https://example.com/docs/intro/",
+        "https://example.com/docs/advanced/",
+    ]
+    sections = build_sections_from_urls(urls, "https://example.com/")
+    assert sections == [
+        {"title": "docs", "heading_level": 2, "urls": [
+            "https://example.com/docs/intro/",
+            "https://example.com/docs/advanced/",
+        ]},
+    ]
+
+
+def test_build_sections_empty():
+    assert build_sections_from_urls([], "https://example.com/") == []
+
+
+# ---------------------------------------------------------------------------
+# SitemapFetcher — full fetch (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+SITEMAP_FETCH_CONFIG = {
+    "url": "https://camoufox.com/sitemap.xml.gz",
+}
+
+
+def _make_sitemap_mock_session(
+    sitemap_xml: str = SAMPLE_SITEMAP_XML,
+    page_content: str = "# Page content",
+):
+    """Build a mock aiohttp.ClientSession for SitemapFetcher tests."""
+    gz_bytes = gzip.compress(sitemap_xml.encode())
+
+    sitemap_resp = AsyncMock()
+    sitemap_resp.raise_for_status = MagicMock()
+    sitemap_resp.read = AsyncMock(return_value=gz_bytes)
+    sitemap_resp.__aenter__ = AsyncMock(return_value=sitemap_resp)
+    sitemap_resp.__aexit__ = AsyncMock(return_value=False)
+
+    page_resp = AsyncMock()
+    page_resp.raise_for_status = MagicMock()
+    page_resp.status = 200
+    page_resp.text = AsyncMock(return_value=page_content)
+    page_resp.headers = {}
+    page_resp.__aenter__ = AsyncMock(return_value=page_resp)
+    page_resp.__aexit__ = AsyncMock(return_value=False)
+
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=[sitemap_resp] + [page_resp] * 50)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    return session
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_creates_output_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+    output_dir = tmp_path / "raw"
+
+    with patch("doc_hub._builtins.fetchers.sitemap.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_sitemap_mock_session()
+        result = await fetcher.fetch("test-corpus", SITEMAP_FETCH_CONFIG, output_dir)
+
+    assert output_dir.exists()
+    assert result == output_dir
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_writes_md_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+
+    with patch("doc_hub._builtins.fetchers.sitemap.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_sitemap_mock_session()
+        await fetcher.fetch("test-corpus", SITEMAP_FETCH_CONFIG, tmp_path)
+
+    md_files = list(tmp_path.glob("*.md"))
+    assert len(md_files) == 3
+    filenames = {f.name for f in md_files}
+    assert filenames == {"index.md", "fingerprint.md", "python.md"}
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_writes_manifest(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+
+    with patch("doc_hub._builtins.fetchers.sitemap.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_sitemap_mock_session()
+        await fetcher.fetch("test-corpus", SITEMAP_FETCH_CONFIG, tmp_path)
+
+    manifest = load_manifest(tmp_path)
+    assert len(manifest) == 3
+    assert "index.md" in manifest
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_manifest_has_sections(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+
+    with patch("doc_hub._builtins.fetchers.sitemap.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_sitemap_mock_session()
+        await fetcher.fetch("test-corpus", SITEMAP_FETCH_CONFIG, tmp_path)
+
+    data = json.loads((tmp_path / "manifest.json").read_text())
+    assert "sections" in data
+    titles = [s["title"] for s in data["sections"]]
+    assert "" in titles  # root section
+    assert "fingerprint" in titles
+    assert "python" in titles
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_saves_raw_xml(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+
+    with patch("doc_hub._builtins.fetchers.sitemap.aiohttp.ClientSession") as mock_cls:
+        mock_cls.return_value = _make_sitemap_mock_session()
+        await fetcher.fetch("test-corpus", SITEMAP_FETCH_CONFIG, tmp_path)
+
+    assert (tmp_path / "_sitemap.xml").exists()
+    assert "camoufox.com" in (tmp_path / "_sitemap.xml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_sitemap_fetcher_missing_url_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("JINA_API_KEY", "jina_test_key")
+    fetcher = SitemapFetcher()
+
+    with pytest.raises(KeyError):
+        await fetcher.fetch("test-corpus", {}, tmp_path)
