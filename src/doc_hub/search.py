@@ -104,6 +104,7 @@ class SearchResult:
     category: str       # 'api' | 'guide' | 'example' | 'eval' | 'other'
     start_line: int     # 1-indexed line number in source file
     end_line: int       # 1-indexed last line number (inclusive)
+    source_file: str    # original source file path (e.g. "guide__install.md")
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,7 @@ def _build_hybrid_sql(
     return f"""
 WITH vector_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line,
+           start_line, end_line, source_file,
            1 - (embedding <=> $1::vector) AS vec_similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
     FROM doc_chunks
@@ -214,7 +215,7 @@ WITH vector_results AS (
 ),
 text_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line,
+           start_line, end_line, source_file,
            ts_rank(tsv, query) AS text_score,
            ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, query) DESC) AS text_rank
     FROM doc_chunks, websearch_to_tsquery('{cfg.language}', $2) query
@@ -236,6 +237,7 @@ SELECT COALESCE(v.id, t.id) AS id,
        COALESCE(v.corpus_id, t.corpus_id) AS corpus_id,
        COALESCE(v.start_line, t.start_line, 0) AS start_line,
        COALESCE(v.end_line, t.end_line, 0) AS end_line,
+       COALESCE(v.source_file, t.source_file) AS source_file,
        COALESCE(v.vec_similarity, 0) AS vec_similarity,
        COALESCE(1.0 / ({cfg.rrfk} + v.vec_rank), 0) +
        COALESCE(1.0 / ({cfg.rrfk} + t.text_rank), 0) AS rrf_score
@@ -351,6 +353,7 @@ async def search_docs(
             category=row["category"],
             start_line=int(row["start_line"]),
             end_line=int(row["end_line"]),
+            source_file=row["source_file"],
         )
         for row in rows
     ]
@@ -573,12 +576,14 @@ def handle_search_args(args: argparse.Namespace) -> None:
 
     if args.json:
         import json
+        from doc_hub.documents import derive_doc_id, doc_path_from_source_file
         print(
             json.dumps(
                 [
                     {
                         "id": r.id,
                         "corpus_id": r.corpus_id,
+                        "doc_id": derive_doc_id(r.corpus_id, doc_path_from_source_file(r.source_file)),
                         "heading": r.heading,
                         "section_path": r.section_path,
                         "source_url": r.source_url,
@@ -587,7 +592,7 @@ def handle_search_args(args: argparse.Namespace) -> None:
                         "category": r.category,
                         "start_line": r.start_line,
                         "end_line": r.end_line,
-                        "content_preview": r.content[:200],
+                        "content": r.content,
                     }
                     for r in results
                 ],

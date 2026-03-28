@@ -39,6 +39,7 @@ def _make_row(
     category: str = "guide",
     vec_similarity: float = 0.80,
     rrf_score: float = 0.033,
+    source_file: str = "guide__test.md",
 ) -> dict:
     """Build a fake asyncpg-style row dict."""
     return {
@@ -53,6 +54,7 @@ def _make_row(
         "rrf_score": rrf_score,
         "start_line": 1,
         "end_line": 10,
+        "source_file": source_file,
     }
 
 
@@ -157,6 +159,7 @@ class TestSearchResult:
             category="api",
             start_line=1,
             end_line=5,
+            source_file="api__hello.md",
         )
         assert r.id == 42
         assert r.corpus_id == "test-corpus"
@@ -169,9 +172,10 @@ class TestSearchResult:
         assert r.category == "api"
         assert r.start_line == 1
         assert r.end_line == 5
+        assert r.source_file == "api__hello.md"
 
-    def test_no_source_file_field(self):
-        """SearchResult must NOT have a source_file field — not in SQL."""
+    def test_source_file_field_present(self):
+        """SearchResult has a source_file field for doc_id derivation."""
         r = SearchResult(
             id=1,
             corpus_id="c",
@@ -184,8 +188,9 @@ class TestSearchResult:
             category="guide",
             start_line=1,
             end_line=1,
+            source_file="test.md",
         )
-        assert not hasattr(r, "source_file")
+        assert r.source_file == "test.md"
 
 
 # ---------------------------------------------------------------------------
@@ -646,15 +651,15 @@ class TestSearchDocs:
         assert "corpus-b" in corpus_ids
 
     @pytest.mark.asyncio
-    async def test_no_source_file_in_result(self):
-        """SearchResult should NOT have a source_file attribute."""
-        pool = _make_pool([_make_row(vec_similarity=0.90)])
+    async def test_source_file_in_result(self):
+        """SearchResult should have a source_file attribute for doc_id derivation."""
+        pool = _make_pool([_make_row(vec_similarity=0.90, source_file="guide__install.md")])
         embedder = _make_mock_embedder()
 
         results = await search_docs("query", pool=pool, embedder=embedder)
 
         assert len(results) == 1
-        assert not hasattr(results[0], "source_file")
+        assert results[0].source_file == "guide__install.md"
 
     @pytest.mark.asyncio
     async def test_custom_search_config(self):

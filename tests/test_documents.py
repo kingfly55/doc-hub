@@ -8,7 +8,7 @@ import pytest
 from doc_hub.documents import (
     DocumentNode,
     _build_doc_id_map,
-    _doc_path_from_source_file,
+    doc_path_from_source_file,
     _derive_title,
     _humanize_path_segment,
     _slugify,
@@ -62,8 +62,8 @@ def _make_mock_pool() -> tuple[MagicMock, AsyncMock]:
 
 
 def test_doc_path_from_source_file():
-    assert _doc_path_from_source_file("guides__install.md") == "guides/install"
-    assert _doc_path_from_source_file("index.md") == "index"
+    assert doc_path_from_source_file("guides__install.md") == "guides/install"
+    assert doc_path_from_source_file("index.md") == "index"
 
 
 def test_humanize_path_segment():

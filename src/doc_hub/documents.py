@@ -24,7 +24,7 @@ class DocumentNode:
     section_count: int = 0
 
 
-def _doc_path_from_source_file(source_file: str) -> str:
+def doc_path_from_source_file(source_file: str) -> str:
     return source_file.removesuffix(".md").replace("__", "/")
 
 
@@ -77,7 +77,7 @@ def _derive_title(source_file: str, chunks_by_file: dict[str, list[Chunk]]) -> s
             title = _clean_heading_text(chunk.heading)
             if title:
                 return title
-    doc_path = _doc_path_from_source_file(source_file)
+    doc_path = doc_path_from_source_file(source_file)
     return _humanize_path_segment(doc_path.rsplit("/", 1)[-1])
 
 
@@ -118,7 +118,7 @@ def build_document_tree(
             {
                 "source_file": source_file,
                 "source_url": source_url,
-                "doc_path": _doc_path_from_source_file(source_file),
+                "doc_path": doc_path_from_source_file(source_file),
                 "title": _derive_title(source_file, chunks_by_file),
                 "total_chars": sum(chunk.char_count for chunk in file_chunks),
                 "section_count": len(file_chunks),
@@ -434,11 +434,11 @@ async def _synthetic_tree_fallback(pool, corpus_slug: str) -> list[dict]:
     """
     rows = await pool.fetch(sql, corpus_slug)
     result = []
-    doc_paths = [_doc_path_from_source_file(str(row["source_file"])) for row in rows]
+    doc_paths = [doc_path_from_source_file(str(row["source_file"])) for row in rows]
     doc_ids_by_path = _build_doc_id_map(corpus_slug, doc_paths)
     for row in rows:
         source_file = str(row["source_file"])
-        doc_path = _doc_path_from_source_file(source_file)
+        doc_path = doc_path_from_source_file(source_file)
         result.append(
             {
                 "doc_path": doc_path,

@@ -64,6 +64,7 @@ def _make_result(
         category="guide",
         start_line=1,
         end_line=5,
+        source_file="guide__test.md",
     )
 
 

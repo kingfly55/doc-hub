@@ -67,6 +67,7 @@ def _make_search_result(
     score: float = 0.03456,
     similarity: float = 0.87654,
     category: str = "guide",
+    source_file: str = "guide__test.md",
 ):
     """Build a fake SearchResult-like object."""
     from doc_hub.search import SearchResult
@@ -82,6 +83,7 @@ def _make_search_result(
         category=category,
         start_line=1,
         end_line=10,
+        source_file=source_file,
     )
 
 
@@ -197,6 +199,7 @@ class TestSearchToolImpl:
         assert "content" in r
         assert "source_url" in r
         assert "corpus_id" in r
+        assert "doc_id" in r
         assert "score" in r
         assert "similarity" in r
         assert "category" in r
@@ -218,6 +221,28 @@ class TestSearchToolImpl:
             )
 
         assert output[0]["corpus_id"] == "fastapi"
+
+    @pytest.mark.asyncio
+    async def test_doc_id_derived_from_source_file(self):
+        """doc_id is derived from corpus_id and source_file."""
+        from doc_hub.documents import derive_doc_id, doc_path_from_source_file
+
+        pool = _make_mock_pool()
+        results = [_make_search_result(corpus_id="pydantic-ai", source_file="guide__install.md")]
+
+        with patch("doc_hub.mcp_server.search_docs", new=AsyncMock(return_value=results)):
+            output = await _search_tool_impl(
+                "test",
+                corpus="pydantic-ai",
+                categories=None,
+                limit=5,
+                max_content_chars=800,
+                pool=pool,
+            )
+
+        expected_doc_id = derive_doc_id("pydantic-ai", doc_path_from_source_file("guide__install.md"))
+        assert output[0]["doc_id"] == expected_doc_id
+        assert len(output[0]["doc_id"]) == 6
 
     @pytest.mark.asyncio
     async def test_content_truncated_to_max_chars(self):

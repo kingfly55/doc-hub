@@ -67,6 +67,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from doc_hub import db
 from doc_hub.db import create_pool, ensure_schema
+from doc_hub.documents import derive_doc_id, doc_path_from_source_file
 from doc_hub.models import Corpus
 from doc_hub.pipeline import run_pipeline
 from doc_hub.search import search_docs
@@ -189,7 +190,7 @@ async def _search_tool_impl(
 
     Returns:
         List of result dicts with keys: heading, section_path, content,
-        source_url, corpus_id, score, similarity, category.
+        source_url, corpus_id, doc_id, score, similarity, category.
     """
     results = await search_docs(
         query,
@@ -205,6 +206,7 @@ async def _search_tool_impl(
             "content": r.content[:max_content_chars],
             "source_url": r.source_url,
             "corpus_id": r.corpus_id,
+            "doc_id": derive_doc_id(r.corpus_id, doc_path_from_source_file(r.source_file)),
             "score": round(r.score, 4),
             "similarity": round(r.similarity, 3),
             "category": r.category,
