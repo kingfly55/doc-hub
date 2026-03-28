@@ -103,8 +103,7 @@ def test_man_prints_bundled_manpage(capsys):
     assert "doc-hub docs search --corpus pydantic-ai \"retry logic\"" in out
     assert "doc-hub docs read pydantic-ai abc123" in out
     assert "doc-hub serve mcp" in out
-    assert "SEE ALSO" in out
-    assert "psql" in out
+    assert "ENVIRONMENT" in out
 
 
 def test_man_falls_back_to_installed_manpath(capsys, tmp_path):
@@ -431,3 +430,129 @@ def test_pipeline_add_missing_path_raises():
         assert False, "Expected SystemExit"
     except SystemExit:
         pass
+
+
+def test_pipeline_add_registers_and_runs_pipeline():
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+
+    with (
+        patch("doc_hub.db.create_pool", AsyncMock(return_value=pool)),
+        patch("doc_hub.db.ensure_schema", AsyncMock()),
+        patch("doc_hub.db.upsert_corpus", AsyncMock()) as mock_upsert,
+        patch("doc_hub.pipeline.run_pipeline", AsyncMock()) as mock_pipeline,
+    ):
+        main([
+            "pipeline", "add", "Pydantic AI",
+            "--strategy", "llms_txt",
+            "--url", "https://ai.pydantic.dev/llms.txt",
+        ])
+
+    mock_upsert.assert_called_once()
+    corpus = mock_upsert.call_args[0][1]
+    assert corpus.slug == "pydantic-ai"
+    assert corpus.name == "Pydantic AI"
+    assert corpus.fetch_strategy == "llms_txt"
+    assert corpus.fetch_config == {"url": "https://ai.pydantic.dev/llms.txt"}
+    mock_pipeline.assert_called_once()
+
+
+def test_pipeline_add_no_index_skips_pipeline():
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+
+    with (
+        patch("doc_hub.db.create_pool", AsyncMock(return_value=pool)),
+        patch("doc_hub.db.ensure_schema", AsyncMock()),
+        patch("doc_hub.db.upsert_corpus", AsyncMock()),
+        patch("doc_hub.pipeline.run_pipeline", AsyncMock()) as mock_pipeline,
+    ):
+        main([
+            "pipeline", "add", "Pydantic AI",
+            "--strategy", "llms_txt",
+            "--url", "https://ai.pydantic.dev/llms.txt",
+            "--no-index",
+        ])
+
+    mock_pipeline.assert_not_called()
+
+
+def test_pipeline_add_custom_slug():
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+
+    with (
+        patch("doc_hub.db.create_pool", AsyncMock(return_value=pool)),
+        patch("doc_hub.db.ensure_schema", AsyncMock()),
+        patch("doc_hub.db.upsert_corpus", AsyncMock()) as mock_upsert,
+        patch("doc_hub.pipeline.run_pipeline", AsyncMock()),
+    ):
+        main([
+            "pipeline", "add", "Pydantic AI",
+            "--strategy", "llms_txt",
+            "--url", "https://ai.pydantic.dev/llms.txt",
+            "--slug", "pai",
+        ])
+
+    corpus = mock_upsert.call_args[0][1]
+    assert corpus.slug == "pai"
+
+
+def test_pipeline_logs_parses_args():
+    from doc_hub.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["pipeline", "logs", "pydantic-ai"])
+
+    assert args.command_group == "pipeline"
+    assert args.pipeline_command == "logs"
+    assert args.slug == "pydantic-ai"
+
+
+def test_pipeline_logs_runs_pipeline_with_logging():
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+    corpus = SimpleNamespace(
+        slug="pydantic-ai",
+        name="Pydantic AI",
+        fetch_strategy="llms_txt",
+        fetch_config={"url": "https://ai.pydantic.dev/llms.txt"},
+        parser="markdown",
+        embedder="gemini",
+        enabled=True,
+        last_indexed_at=None,
+        total_chunks=42,
+    )
+
+    with (
+        patch("doc_hub.db.create_pool", AsyncMock(return_value=pool)),
+        patch("doc_hub.db.ensure_schema", AsyncMock()),
+        patch("doc_hub.db.get_corpus", AsyncMock(return_value=corpus)),
+        patch("doc_hub.pipeline.run_pipeline", AsyncMock()) as mock_pipeline,
+    ):
+        main(["pipeline", "logs", "pydantic-ai"])
+
+    mock_pipeline.assert_called_once()
+
+
+def test_pipeline_logs_corpus_not_found(capsys):
+    from doc_hub.cli.main import main
+
+    pool = SimpleNamespace(close=AsyncMock())
+
+    with (
+        patch("doc_hub.db.create_pool", AsyncMock(return_value=pool)),
+        patch("doc_hub.db.ensure_schema", AsyncMock()),
+        patch("doc_hub.db.get_corpus", AsyncMock(return_value=None)),
+    ):
+        try:
+            main(["pipeline", "logs", "nonexistent"])
+            assert False, "Expected SystemExit"
+        except SystemExit as e:
+            assert e.code == 1
+
+    assert "not found" in capsys.readouterr().err

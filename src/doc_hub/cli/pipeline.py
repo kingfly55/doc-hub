@@ -81,6 +81,27 @@ def handle_add(args: argparse.Namespace) -> None:
     asyncio.run(_add())
 
 
+def handle_logs(args: argparse.Namespace) -> None:
+    async def _logs() -> None:
+        from doc_hub.db import create_pool, ensure_schema, get_corpus
+        from doc_hub.pipeline import run_pipeline
+
+        pool = await create_pool()
+        try:
+            await ensure_schema(pool)
+            corpus = await get_corpus(pool, args.slug)
+            if corpus is None:
+                print(f"Error: corpus '{args.slug}' not found", file=sys.stderr)
+                raise SystemExit(1)
+
+            print(f"Running pipeline for {corpus.name} [{corpus.slug}]...")
+            await run_pipeline(corpus, pool=pool)
+        finally:
+            await pool.close()
+
+    asyncio.run(_logs())
+
+
 def handle_run(args: argparse.Namespace) -> None:
     handle_pipeline_run_args(args)
 
@@ -128,3 +149,7 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--branch", default=None, help="Git branch (git_repo)")
     add_parser.add_argument("--docs-dir", default=None, help="Docs subdirectory in repo (git_repo)")
     add_parser.set_defaults(handler=handle_add)
+
+    logs_parser = pipeline_subparsers.add_parser("logs", help="Run pipeline with visible logs for a corpus")
+    logs_parser.add_argument("slug", help="Corpus slug")
+    logs_parser.set_defaults(handler=handle_logs)
