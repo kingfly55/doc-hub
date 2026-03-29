@@ -113,12 +113,7 @@ doc-hub docs read CORPUS DOC_PATH_OR_ID [options]
 | `corpus` | string | **required** | Corpus slug containing the document. |
 | `doc_path` | string | **required** | Document path or short document ID from `doc-hub docs browse`. |
 | `--section SECTION_PATH` | string | none | Restrict output to one section and its descendants. |
-| `--force` | flag | false | Force full content output for large documents. |
 | `--json` | flag | false | Emit the same structured payload shape as the MCP read tool. |
-
-### Large-document behavior
-
-If the selected document exceeds 20,000 characters and neither `--force` nor `--section` is provided, the command prints an outline instead of the full body. Use `--section` to read one section or `--force` to print everything.
 
 ### Examples
 
@@ -128,9 +123,6 @@ doc-hub docs read pydantic-ai agents
 
 # Read one section and its descendants
 doc-hub docs read pydantic-ai agents --section "Agents > Tools"
-
-# Force full output for a large document
-doc-hub docs read pydantic-ai agents --force
 
 # Machine-readable output
 doc-hub docs read pydantic-ai agents --json

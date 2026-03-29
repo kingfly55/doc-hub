@@ -330,10 +330,10 @@ Executed in `embed_chunks()` (`src/doc_hub/embed.py`):
 1. Validates `embedder.dimensions == get_vector_dim()` (`DOC_HUB_VECTOR_DIM`).
 2. Loads the per-corpus embedding cache from `embeddings_cache.jsonl` (keyed by `content_hash + model_name + dimensions`).
 3. Calls `embedding_input(chunk)` to build the text for each cache-miss chunk.
-4. Calls `embedder.embed_batch(texts)` in batches of 50 (default).
+4. Calls `embedder.embed_batch(texts)` in batches of 100 (default, Gemini API max).
 5. L2-normalizes every returned vector via `l2_normalize()`.
 6. Appends normalized vectors to cache.
-7. Sleeps between batches (`DOC_HUB_EMBED_SLEEP`, default 65s for Gemini rate limits).
+7. Uses a sliding-window rate limiter (`DOC_HUB_EMBED_RPM`/`DOC_HUB_EMBED_TPM`) to pace batches — waits only as long as needed.
 8. Calls `embedder.embed_query(query)` during search (not indexing).
 
 ### Embedding cache JSONL format

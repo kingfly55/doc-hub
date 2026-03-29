@@ -75,7 +75,6 @@ from doc_hub.search import search_docs
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8340
-LARGE_DOC_THRESHOLD = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +205,7 @@ async def _search_tool_impl(
             "content": r.content[:max_content_chars],
             "source_url": r.source_url,
             "corpus_id": r.corpus_id,
-            "doc_id": derive_doc_id(r.corpus_id, doc_path_from_source_file(r.source_file)),
+            "doc_id": derive_doc_id(r.corpus_id, r.doc_path or doc_path_from_source_file(r.source_file)),
             "score": round(r.score, 4),
             "similarity": round(r.similarity, 3),
             "category": r.category,
@@ -469,7 +468,6 @@ async def get_document_tool(
     doc_path: str,
     ctx: Context,
     section: str | None = None,
-    force: bool = False,
 ) -> dict:
     """Get a document or section from a corpus."""
     state: AppState = ctx.request_context.lifespan_context
@@ -477,7 +475,6 @@ async def get_document_tool(
         corpus=corpus,
         doc_path=doc_path,
         section=section,
-        force=force,
         pool=state.pool,
     )
 
@@ -487,7 +484,6 @@ async def _get_document_impl(
     corpus: str,
     doc_path: str,
     section: str | None,
-    force: bool,
     pool: asyncpg.Pool,
 ) -> dict:
     """Core get-document logic."""
@@ -504,29 +500,6 @@ async def _get_document_impl(
         doc_path,
     )
     source_url = str(chunks[0].get("source_url", ""))
-
-    if total_chars > LARGE_DOC_THRESHOLD and not force and section is None:
-        return {
-            "mode": "outline",
-            "doc_path": doc_path,
-            "title": title,
-            "source_url": source_url,
-            "total_chars": total_chars,
-            "section_count": section_count,
-            "sections": [
-                {
-                    "heading": chunk.get("heading"),
-                    "heading_level": chunk.get("heading_level"),
-                    "section_path": chunk.get("section_path"),
-                    "char_count": chunk.get("char_count"),
-                }
-                for chunk in chunks
-            ],
-            "hint": (
-                "Document is large. Request a specific section with section=... "
-                "or set force=true to retrieve the full content."
-            ),
-        }
 
     return {
         "mode": "full",

@@ -26,7 +26,9 @@ That means explicit shell exports still win, repo-local `.env` files still work 
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | No | Gemini embedding model name |
 | `GEMINI_EMBEDDING_DIM` | `768` | No | Gemini output dimensionality |
 | `DOC_HUB_VECTOR_DIM` | `768` | No | Vector column size in PostgreSQL — must match embedder dimensions |
-| `DOC_HUB_EMBED_SLEEP` | `65.0` | No | Seconds to sleep between embedding batches (rate-limit pacing) |
+| `DOC_HUB_EMBED_RPM` | `80` | No | Requests-per-minute budget for embedding API (sliding window) |
+| `DOC_HUB_EMBED_TPM` | `200000` | No | Tokens-per-minute budget for embedding API (sliding window) |
+| `DOC_HUB_EMBED_BATCH_SIZE` | `100` | No | Texts per embedding API request (max 100 for Gemini) |
 | `DOC_HUB_DATA_DIR` | See below | No | Override data root directory |
 | `XDG_DATA_HOME` | — | No | XDG base data dir — used if `DOC_HUB_DATA_DIR` is not set |
 | `DOC_HUB_EVAL_DIR` | See below | No | Override eval file directory |
@@ -144,18 +146,27 @@ This variable must be a positive integer. Any other value causes `get_vector_dim
 export DOC_HUB_VECTOR_DIM=768
 ```
 
-### `DOC_HUB_EMBED_SLEEP` (default: `65.0`)
+### `DOC_HUB_EMBED_RPM` (default: `80`)
 
-Seconds to sleep between embedding batches. The default of 65 seconds paces requests to stay within the Gemini free-tier rate limit of 100 requests per minute.
+Requests-per-minute budget for the embedding API. The rate limiter uses a sliding 60-second window to track usage and waits only as long as needed before each batch. The default of 80 leaves headroom below the Gemini free-tier limit of 100 RPM.
 
-Set to `0` for embedders without rate limits, or reduce it if you have a paid Gemini quota.
+### `DOC_HUB_EMBED_TPM` (default: `200000`)
+
+Tokens-per-minute budget for the embedding API. Token counts are estimated from text length (chars/4). The default of 200k leaves headroom below the Gemini free-tier limit of ~250k TPM. For paid tiers, increase this significantly (e.g. `1000000` for Tier 1).
+
+### `DOC_HUB_EMBED_BATCH_SIZE` (default: `100`)
+
+Number of texts per embedding API request. The Gemini `batchEmbedContents` endpoint supports up to 100 texts per call. Each batch counts as a single request for RPM purposes.
 
 ```bash
-export DOC_HUB_EMBED_SLEEP=0      # no rate limiting
-export DOC_HUB_EMBED_SLEEP=5.0    # 5-second pause between batches
-```
+# Free tier (default — conservative)
+export DOC_HUB_EMBED_RPM=80
+export DOC_HUB_EMBED_TPM=200000
 
-This variable overrides the `inter_batch_sleep` parameter in `embed_chunks()` (`embed.py:253`).
+# Paid Tier 1 (much faster)
+export DOC_HUB_EMBED_RPM=2000
+export DOC_HUB_EMBED_TPM=900000
+```
 
 ---
 
@@ -271,7 +282,8 @@ PGPASSWORD=mypassword
 PGDATABASE=doc_hub
 GEMINI_API_KEY=AIza...
 DOC_HUB_VECTOR_DIM=768
-DOC_HUB_EMBED_SLEEP=65.0
+DOC_HUB_EMBED_RPM=80
+DOC_HUB_EMBED_TPM=200000
 ```
 
 Variables already in your environment take precedence over `.env` values.

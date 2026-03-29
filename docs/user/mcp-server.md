@@ -384,10 +384,8 @@ Read a document or one section of a document.
 | `corpus` | `str` | required | Corpus slug containing the document |
 | `doc_path` | `str` | required | Document path to read |
 | `section` | `str \| None` | `None` | Optional section-path filter |
-| `force` | `bool` | `False` | Force full content output for large documents |
 
 **Returns:** `dict`
 
 - Full mode: `mode`, `doc_path`, `title`, `content`, `source_url`, `total_chars`, `section_count`
-- Outline mode for large documents: `mode`, `doc_path`, `title`, `source_url`, `total_chars`, `section_count`, `sections`, `hint`
 - Missing document: `{"error": "Document '<doc_path>' not found in corpus '<corpus>'"}`

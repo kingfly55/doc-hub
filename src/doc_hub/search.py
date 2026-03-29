@@ -105,6 +105,7 @@ class SearchResult:
     start_line: int     # 1-indexed line number in source file
     end_line: int       # 1-indexed last line number (inclusive)
     source_file: str    # original source file path (e.g. "guide__install.md")
+    doc_path: str       # resolved doc_path from doc_documents (for correct doc_id)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +202,7 @@ def _build_hybrid_sql(
     return f"""
 WITH vector_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line, source_file,
+           start_line, end_line, source_file, document_id,
            1 - (embedding <=> $1::vector) AS vec_similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
     FROM doc_chunks
@@ -215,7 +216,7 @@ WITH vector_results AS (
 ),
 text_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line, source_file,
+           start_line, end_line, source_file, document_id,
            ts_rank(tsv, query) AS text_score,
            ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, query) DESC) AS text_rank
     FROM doc_chunks, websearch_to_tsquery('{cfg.language}', $2) query
@@ -227,23 +228,30 @@ text_results AS (
       AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\\')
     ORDER BY ts_rank(tsv, query) DESC
     LIMIT {cfg.text_limit}
+),
+merged AS (
+    SELECT COALESCE(v.id, t.id) AS id,
+           COALESCE(v.heading, t.heading) AS heading,
+           COALESCE(v.section_path, t.section_path) AS section_path,
+           COALESCE(v.content, t.content) AS content,
+           COALESCE(v.source_url, t.source_url) AS source_url,
+           COALESCE(v.category, t.category) AS category,
+           COALESCE(v.corpus_id, t.corpus_id) AS corpus_id,
+           COALESCE(v.start_line, t.start_line, 0) AS start_line,
+           COALESCE(v.end_line, t.end_line, 0) AS end_line,
+           COALESCE(v.source_file, t.source_file) AS source_file,
+           COALESCE(v.document_id, t.document_id) AS document_id,
+           COALESCE(v.vec_similarity, 0) AS vec_similarity,
+           COALESCE(1.0 / ({cfg.rrfk} + v.vec_rank), 0) +
+           COALESCE(1.0 / ({cfg.rrfk} + t.text_rank), 0) AS rrf_score
+    FROM vector_results v
+    FULL OUTER JOIN text_results t ON v.id = t.id
 )
-SELECT COALESCE(v.id, t.id) AS id,
-       COALESCE(v.heading, t.heading) AS heading,
-       COALESCE(v.section_path, t.section_path) AS section_path,
-       COALESCE(v.content, t.content) AS content,
-       COALESCE(v.source_url, t.source_url) AS source_url,
-       COALESCE(v.category, t.category) AS category,
-       COALESCE(v.corpus_id, t.corpus_id) AS corpus_id,
-       COALESCE(v.start_line, t.start_line, 0) AS start_line,
-       COALESCE(v.end_line, t.end_line, 0) AS end_line,
-       COALESCE(v.source_file, t.source_file) AS source_file,
-       COALESCE(v.vec_similarity, 0) AS vec_similarity,
-       COALESCE(1.0 / ({cfg.rrfk} + v.vec_rank), 0) +
-       COALESCE(1.0 / ({cfg.rrfk} + t.text_rank), 0) AS rrf_score
-FROM vector_results v
-FULL OUTER JOIN text_results t ON v.id = t.id
-ORDER BY rrf_score DESC
+SELECT m.*,
+       COALESCE(d.doc_path, '') AS doc_path
+FROM merged m
+LEFT JOIN doc_documents d ON m.document_id = d.id
+ORDER BY m.rrf_score DESC
 LIMIT $8
 OFFSET $9
 """
@@ -354,6 +362,7 @@ async def search_docs(
             start_line=int(row["start_line"]),
             end_line=int(row["end_line"]),
             source_file=row["source_file"],
+            doc_path=row["doc_path"],
         )
         for row in rows
     ]
@@ -583,7 +592,10 @@ def handle_search_args(args: argparse.Namespace) -> None:
                     {
                         "id": r.id,
                         "corpus_id": r.corpus_id,
-                        "doc_id": derive_doc_id(r.corpus_id, doc_path_from_source_file(r.source_file)),
+                        "doc_id": derive_doc_id(
+                            r.corpus_id,
+                            r.doc_path or doc_path_from_source_file(r.source_file),
+                        ),
                         "heading": r.heading,
                         "section_path": r.section_path,
                         "source_url": r.source_url,
@@ -605,19 +617,27 @@ def handle_search_args(args: argparse.Namespace) -> None:
         print(f"No results found for: {args.query!r}")
         return
 
+    from doc_hub.documents import derive_doc_id, doc_path_from_source_file
+
     print(f"\nSearch results for: {args.query!r}")
     print(f"Corpora: {', '.join(args.corpora)}")
     print(f"{'─' * 70}")
     for i, r in enumerate(results, 1):
+        doc_id = derive_doc_id(
+            r.corpus_id,
+            r.doc_path or doc_path_from_source_file(r.source_file),
+        )
         print(f"\n[{i}] {r.heading}")
+        print(f"    Chunk ID:   {r.id}")
+        print(f"    Doc ID:     {doc_id}")
         print(f"    Corpus:     {r.corpus_id}")
         print(f"    Path:       {r.section_path[:60]}")
         print(f"    Category:   {r.category}")
         print(f"    Lines:      {r.start_line}-{r.end_line}")
         print(f"    Similarity: {r.similarity:.3f}  |  RRF Score: {r.score:.5f}")
         print(f"    URL:        {r.source_url}")
-        preview = r.content[:200].replace("\n", " ")
-        print(f"    Preview:    {preview}...")
+        print(f"\n{r.content}")
+        print(f"{'─' * 70}")
     print()
 
 

@@ -112,6 +112,7 @@ def handle_clean(args: argparse.Namespace) -> None:
             update_corpus_fetch_config,
         )
         from doc_hub.paths import raw_dir  # noqa: PLC0415
+        from doc_hub.pipeline import run_pipeline  # noqa: PLC0415
 
         pool = await create_pool()
         try:
@@ -144,6 +145,15 @@ def handle_clean(args: argparse.Namespace) -> None:
                 corpus.fetch_config["clean"] = True
                 await update_corpus_fetch_config(pool, corpus.slug, corpus.fetch_config)
                 print(f"Set clean=true in fetch_config for '{corpus.slug}' — future fetches will auto-clean")
+
+            # Re-run parse → embed → index → tree so the DB reflects cleaned content
+            if ok > 0:
+                print(f"Re-indexing '{corpus.slug}' with cleaned content...")
+                await run_pipeline(
+                    corpus,
+                    skip_download=True,
+                    pool=pool,
+                )
         finally:
             await pool.close()
 

@@ -319,7 +319,7 @@ where `doc_name` replaces `__` with `/` and strips `.md`. This prefix is critica
 - **JSONB codec**: registered per-connection via `_init_connection()` callback — asyncpg does not auto-serialize Python dicts to JSONB.
 - **Advisory lock**: `pg_advisory_xact_lock(hashtext(slug))` inside `upsert_chunks()` — transaction-scoped, prevents concurrent indexing of the same corpus.
 - **Download concurrency**: bounded by semaphore; controlled by `workers` parameter (default: `DEFAULT_WORKERS = 20`).
-- **Embed batching**: `BATCH_SIZE = 50` items per API call; inter-batch sleep defaults to 65s (Gemini free tier). Override via `DOC_HUB_EMBED_SLEEP` env var.
+- **Embed batching**: `BATCH_SIZE = 100` items per API call (Gemini max); sliding-window rate limiter tracks RPM and TPM over 60s windows — no fixed sleep. Configure via `DOC_HUB_EMBED_RPM` (default: 80) and `DOC_HUB_EMBED_TPM` (default: 200000).
 - **`sync_all()`**: iterates enabled corpora sequentially; per-corpus errors are caught and logged — one failed corpus does not stop the rest.
 
 ---

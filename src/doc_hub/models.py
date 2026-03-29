@@ -6,6 +6,7 @@ This module defines:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,11 +76,19 @@ class Corpus:
             last_indexed_at = row["last_indexed_at"]
             total_chunks = row["total_chunks"] or 0
 
+        # fetch_config is stored as JSONB.  The asyncpg pool registers a
+        # custom codec that auto-deserializes to dict, but some code paths
+        # (e.g. explicit json.dumps in upsert_corpus) can cause it to
+        # arrive as a raw JSON string.  Normalise to dict here.
+        raw_config = row["fetch_config"]
+        if isinstance(raw_config, str):
+            raw_config = json.loads(raw_config)
+
         return cls(
             slug=row["slug"],
             name=row["name"],
             fetch_strategy=row["fetch_strategy"],  # plain str
-            fetch_config=row["fetch_config"],
+            fetch_config=raw_config,
             parser=parser,
             embedder=embedder,
             enabled=enabled,

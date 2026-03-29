@@ -21,6 +21,8 @@ import asyncio
 import json
 import logging
 import os
+import time as _time
+from collections import deque
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,7 +37,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 50          # Items per API request (default).
+# Gemini batchEmbedContents hard limit is 100 texts per request.
+BATCH_SIZE = 100
+
+# Default rate-limit budgets (conservative for Gemini free tier).
+# Free tier: 100 RPM, ~250k TPM.  We leave headroom for search queries.
+DEFAULT_RPM = 80
+DEFAULT_TPM = 200_000
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +110,93 @@ def l2_normalize(vec: list[float]) -> list[float]:
     if norm == 0:
         return vec  # degenerate case — leave unchanged
     return (arr / norm).tolist()
+
+
+# ---------------------------------------------------------------------------
+# Sliding-window rate limiter
+# ---------------------------------------------------------------------------
+
+
+def _estimate_tokens(texts: list[str]) -> int:
+    """Estimate token count for a batch of texts.
+
+    Uses chars/4 as a rough approximation (standard heuristic for
+    English text with most tokenizers). Slightly overestimates, which
+    is preferable for rate-limiting purposes.
+    """
+    return sum(len(t) for t in texts) // 4
+
+
+class RateLimiter:
+    """Sliding-window rate limiter for RPM and TPM.
+
+    Tracks requests and estimated tokens over a rolling 60-second window.
+    Before each batch, ``acquire()`` checks whether sending the batch
+    would exceed either budget. If so, it sleeps exactly long enough
+    for old entries to expire from the window.
+
+    The embedder plugin's own retry-on-429 logic remains as a safety net
+    for cases where the token estimate is off.
+
+    Args:
+        rpm: Maximum requests per minute (default: 80).
+        tpm: Maximum tokens per minute (default: 200_000).
+    """
+
+    def __init__(self, rpm: int = DEFAULT_RPM, tpm: int = DEFAULT_TPM) -> None:
+        self.rpm = rpm
+        self.tpm = tpm
+        self._request_times: deque[float] = deque()
+        self._token_usage: deque[tuple[float, int]] = deque()
+
+    def _prune(self, now: float) -> tuple[int, int]:
+        """Remove expired entries and return (current_rpm, current_tpm)."""
+        cutoff = now - 60.0
+        while self._request_times and self._request_times[0] < cutoff:
+            self._request_times.popleft()
+        while self._token_usage and self._token_usage[0][0] < cutoff:
+            self._token_usage.popleft()
+        current_rpm = len(self._request_times)
+        current_tpm = sum(tokens for _, tokens in self._token_usage)
+        return current_rpm, current_tpm
+
+    async def acquire(self, estimated_tokens: int) -> None:
+        """Wait until a request consuming ``estimated_tokens`` can be sent."""
+        while True:
+            now = _time.monotonic()
+            current_rpm, current_tpm = self._prune(now)
+
+            rpm_ok = current_rpm < self.rpm
+            tpm_ok = current_tpm + estimated_tokens <= self.tpm
+
+            if rpm_ok and tpm_ok:
+                self._request_times.append(now)
+                self._token_usage.append((now, estimated_tokens))
+                return
+
+            # Calculate how long to wait.
+            wait = 0.0
+            if not rpm_ok and self._request_times:
+                # Wait for the oldest request to expire from the window.
+                wait = max(wait, self._request_times[0] + 60.0 - now)
+            if not tpm_ok:
+                # Walk the token window to find when enough tokens expire.
+                needed = current_tpm + estimated_tokens - self.tpm
+                accumulated = 0
+                for ts, tokens in self._token_usage:
+                    accumulated += tokens
+                    if accumulated >= needed:
+                        wait = max(wait, ts + 60.0 - now)
+                        break
+
+            wait = max(wait, 0.5)  # minimum wait to avoid busy-spinning
+            log.info(
+                "Rate limiter: waiting %.1fs (RPM: %d/%d, TPM: ~%dk/%dk)",
+                wait,
+                current_rpm, self.rpm,
+                current_tpm // 1000, self.tpm // 1000,
+            )
+            await asyncio.sleep(wait)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +309,6 @@ async def embed_chunks(
     embedder: "Embedder",
     *,
     batch_size: int = BATCH_SIZE,
-    inter_batch_sleep: float = 65.0,
 ) -> list[EmbeddedChunk]:
     """Embed parsed chunks using the provided embedder plugin.
 
@@ -227,6 +321,13 @@ async def embed_chunks(
     6. Update cache
     7. Write embedded_chunks.jsonl
 
+    Rate limiting is handled by a sliding-window ``RateLimiter`` that
+    tracks RPM and estimated TPM usage over a rolling 60-second window.
+    Batches are sent as fast as the budget allows — no fixed sleep.
+    Configure via environment variables:
+        DOC_HUB_EMBED_RPM   — requests/minute budget (default: 80)
+        DOC_HUB_EMBED_TPM   — tokens/minute budget   (default: 200000)
+
     The function uses embedding_input(chunk) from parse.py to construct
     the text sent to the embedder (prepends document/section context).
 
@@ -234,10 +335,7 @@ async def embed_chunks(
         corpus_slug: Corpus slug (for paths and logging).
         chunks: Parsed chunks from the parse stage.
         embedder: An Embedder protocol instance.
-        batch_size: Items per API request (default 50).
-        inter_batch_sleep: Seconds to sleep between batches (default 65).
-            Set to 0 for embedders without rate limits.
-            Can be overridden via DOC_HUB_EMBED_SLEEP environment variable.
+        batch_size: Items per API request (default 100, API max).
 
     Returns:
         List of EmbeddedChunk objects with L2-normalized embeddings.
@@ -245,12 +343,12 @@ async def embed_chunks(
     Raises:
         ValueError: If embedder dimensions don't match deployment config.
     """
-    import time as _time  # noqa: PLC0415
-
     from doc_hub.db import get_vector_dim  # noqa: PLC0415
 
-    # Read inter_batch_sleep from env var (allows override without code change)
-    inter_batch_sleep = float(os.getenv("DOC_HUB_EMBED_SLEEP", str(inter_batch_sleep)))
+    # Read rate-limit config from env (allows override without code change)
+    rpm = int(os.getenv("DOC_HUB_EMBED_RPM", str(DEFAULT_RPM)))
+    tpm = int(os.getenv("DOC_HUB_EMBED_TPM", str(DEFAULT_TPM)))
+    batch_size = int(os.getenv("DOC_HUB_EMBED_BATCH_SIZE", str(batch_size)))
 
     # Dimension validation
     deployment_dim = get_vector_dim()
@@ -294,10 +392,15 @@ async def embed_chunks(
 
     if n_to_embed > 0:
         n_batches = (n_to_embed + batch_size - 1) // batch_size
-        log.info("[%s] Embedding %d new chunks in %d batches...", corpus_slug, n_to_embed, n_batches)
+        log.info(
+            "[%s] Embedding %d new chunks in %d batches (RPM budget: %d, TPM budget: %dk)",
+            corpus_slug, n_to_embed, n_batches, rpm, tpm // 1000,
+        )
 
         # Ensure cache file parent directory exists
         cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+        rate_limiter = RateLimiter(rpm=rpm, tpm=tpm)
 
         for batch_num, batch_start in enumerate(range(0, n_to_embed, batch_size), start=1):
             batch_indices = to_embed_indices[batch_start: batch_start + batch_size]
@@ -308,12 +411,17 @@ async def embed_chunks(
             # which is critical for embedding quality — must NOT use raw chunk.content.
             texts = [embedding_input(chunk) for chunk in batch_chunks]
 
+            # Wait for rate-limit budget before sending the request.
+            estimated_tokens = _estimate_tokens(texts)
+            await rate_limiter.acquire(estimated_tokens)
+
             log.info(
-                "[%s] Batch %d/%d: embedding %d chunks",
+                "[%s] Batch %d/%d: embedding %d chunks (~%dk tokens)",
                 corpus_slug,
                 batch_num,
                 n_batches,
                 len(texts),
+                estimated_tokens // 1000,
             )
 
             raw_embeddings = await embedder.embed_batch(texts)
@@ -323,17 +431,6 @@ async def embed_chunks(
                 normalized = l2_normalize(raw_emb)
                 cache[chunk.content_hash] = normalized
                 await append_to_cache(cache_path, chunk.content_hash, normalized, model, dimensions)
-
-            # Sleep between batches to respect rate limits.
-            # Default: 65s (Gemini free tier: 100 req/min).
-            # Override via DOC_HUB_EMBED_SLEEP env var.
-            if batch_num < n_batches:
-                log.info(
-                    "[%s] Rate-limit pause: sleeping %.1fs before next batch...",
-                    corpus_slug,
-                    inter_batch_sleep,
-                )
-                await asyncio.sleep(inter_batch_sleep)
 
         log.info("[%s] Embedding complete. Cache now has %d entries.", corpus_slug, len(cache))
     else:

@@ -1,7 +1,7 @@
 """Pipeline orchestration for doc-hub.
 
 Coordinates the full docs pipeline:
-    fetch → parse → embed → index → tree
+    fetch → clean → parse → embed → index → tree
 
 Each stage is independently executable via ``--stage``. Running without
 ``--stage`` executes all stages in order.
@@ -95,7 +95,40 @@ async def run_fetch(
 
 
 # ---------------------------------------------------------------------------
-# Placeholder stages (implemented in later phases)
+# Stage: clean (LLM-based markdown cleaning)
+# ---------------------------------------------------------------------------
+
+
+async def run_clean(corpus: Corpus) -> None:
+    """Clean fetched markdown files via LLM if the corpus has clean=true.
+
+    Checks ``corpus.fetch_config["clean"]``. If falsy, skips silently.
+    Requires DOC_HUB_CLEAN_MODEL, DOC_HUB_CLEAN_API_KEY, and
+    DOC_HUB_CLEAN_BASE_URL environment variables to be set.
+
+    Args:
+        corpus: The corpus whose raw files should be cleaned.
+    """
+    if not corpus.fetch_config.get("clean"):
+        log.debug("[%s] Skipping clean (clean not enabled in fetch_config)", corpus.slug)
+        return
+
+    from doc_hub.clean import clean_corpus  # noqa: PLC0415
+
+    output = raw_dir(corpus)
+    if not output.exists():
+        log.warning("[%s] No raw directory found — skipping clean", corpus.slug)
+        return
+
+    log.info("[%s] === STEP 1b: Clean (LLM) ===", corpus.slug)
+    results = await clean_corpus(output)
+    ok = sum(1 for r in results if r.success)
+    fail = sum(1 for r in results if not r.success)
+    log.info("[%s] Clean complete: %d succeeded, %d failed", corpus.slug, ok, fail)
+
+
+# ---------------------------------------------------------------------------
+# Stage: parse
 # ---------------------------------------------------------------------------
 
 
@@ -407,6 +440,12 @@ async def run_pipeline(
             _log_elapsed(corpus, pipeline_start)
             return None
 
+    if stage == "clean" or stage is None:
+        await run_clean(corpus)
+        if stage == "clean":
+            _log_elapsed(corpus, pipeline_start)
+            return None
+
     parsed_chunks = None
     if stage == "parse" or stage is None:
         parsed_chunks = await run_parse(corpus)
@@ -449,9 +488,9 @@ async def run_pipeline(
     if stage is None:
         await run_build_tree(corpus, pool=pool)
 
-    if stage is not None and stage not in ("fetch", "parse", "embed", "index", "tree"):
+    if stage is not None and stage not in ("fetch", "clean", "parse", "embed", "index", "tree"):
         raise ValueError(
-            f"Unknown stage: {stage!r}. Valid stages: fetch, parse, embed, index, tree"
+            f"Unknown stage: {stage!r}. Valid stages: fetch, clean, parse, embed, index, tree"
         )
 
     _log_elapsed(corpus, pipeline_start)
@@ -491,7 +530,7 @@ Examples:
     )
     parser.add_argument(
         "--stage",
-        choices=["fetch", "parse", "embed", "index", "tree"],
+        choices=["fetch", "clean", "parse", "embed", "index", "tree"],
         default=None,
         help="Run only this stage (default: run all stages)",
     )
