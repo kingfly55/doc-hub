@@ -162,7 +162,8 @@ doc-hub ships four built-in fetchers registered via entry points:
 
 | Name | Class | Description |
 |------|-------|-------------|
-| `llms_txt` | `LlmsTxtFetcher` | Downloads `.md` files listed in an `llms.txt` index file |
+| `llms_txt` | `LlmsTxtFetcher` | Downloads pages listed in an `llms.txt` index file. Supports `url_suffix` (e.g. `".md"`) for sites that list bare URLs but serve pages with an extension. |
+| `direct_url` | `DirectUrlFetcher` | Downloads one or more URLs directly as markdown files. Useful for monolithic docs (e.g. `llms-full.txt`). Config keys: `url` (single) or `urls` (list), optional `filenames` map. |
 | `local_dir` | `LocalDirFetcher` | Copies/links a local directory of markdown files |
 | `sitemap` | `SitemapFetcher` | Crawls a sitemap XML and downloads pages as markdown |
 | `git_repo` | `GitRepoFetcher` | Clones a git repository and extracts markdown files |

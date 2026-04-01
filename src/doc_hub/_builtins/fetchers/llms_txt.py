@@ -207,10 +207,17 @@ async def _derive_base_url(llms_txt_url: str) -> str:
     return llms_txt_url.rsplit("/", 1)[0] + "/"
 
 
-def _derive_url_pattern(base_url: str) -> str:
-    r"""Derive a default URL extraction regex from the base URL."""
+def _derive_url_pattern(base_url: str, require_md_suffix: bool = True) -> str:
+    r"""Derive a default URL extraction regex from the base URL.
+
+    When *require_md_suffix* is False (used together with ``url_suffix`` in
+    fetch_config) the pattern matches any path under *base_url* so that a
+    suffix can be appended after extraction.
+    """
     escaped = re.escape(base_url.rstrip("/"))
-    return escaped + r"/[^\s\)]+\.md"
+    if require_md_suffix:
+        return escaped + r"/[^\s\)]+\.md"
+    return escaped + r"/[^\s\)\"\]<>]+"
 
 
 def _parse_sections(llms_txt_content: str, url_pattern: str) -> list[dict[str, Any]]:
@@ -270,6 +277,11 @@ class LlmsTxtFetcher:
 
     Optional fetch_config keys:
         url_pattern (str): Regex to extract doc URLs. Auto-derived if omitted.
+        url_suffix (str): Suffix appended to each extracted URL (after stripping
+            any trailing slash) before downloading.  Use ``".md"`` for sites
+            like docs.deno.com where the index lists bare URLs but each page is
+            served with an ``.md`` extension.  When set, the auto-derived
+            ``url_pattern`` no longer requires a ``.md`` suffix.
         base_url (str): Base URL for filename generation. Auto-derived if omitted.
         workers (int): Download concurrency (default 20).
         retries (int): Per-URL retry count (default 3).
@@ -293,7 +305,10 @@ class LlmsTxtFetcher:
         """
         llms_txt_url: str = fetch_config["url"]
         base_url: str = fetch_config.get("base_url") or await _derive_base_url(llms_txt_url)
-        url_pattern: str = fetch_config.get("url_pattern") or _derive_url_pattern(base_url)
+        url_suffix: str = fetch_config.get("url_suffix", "")
+        url_pattern: str = fetch_config.get("url_pattern") or _derive_url_pattern(
+            base_url, require_md_suffix=not url_suffix
+        )
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
 
@@ -317,6 +332,13 @@ class LlmsTxtFetcher:
         # 2. Extract doc URLs using the configured regex pattern
         sections = _parse_sections(llms_txt_content, url_pattern)
         upstream_urls = re.findall(url_pattern, llms_txt_content)
+
+        # Apply url_suffix transform (e.g. ".md") if configured
+        if url_suffix:
+            upstream_urls = [u.rstrip("/") + url_suffix for u in upstream_urls]
+            for section in sections:
+                section["urls"] = [u.rstrip("/") + url_suffix for u in section["urls"]]
+
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique_urls: list[str] = []

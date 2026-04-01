@@ -35,6 +35,7 @@ llms_txt = "doc_hub._builtins.fetchers.llms_txt:LlmsTxtFetcher"
 local_dir = "doc_hub._builtins.fetchers.local_dir:LocalDirFetcher"
 sitemap = "doc_hub._builtins.fetchers.sitemap:SitemapFetcher"
 git_repo = "doc_hub._builtins.fetchers.git_repo:GitRepoFetcher"
+direct_url = "doc_hub._builtins.fetchers.direct_url:DirectUrlFetcher"
 
 [project.entry-points."doc_hub.parsers"]
 markdown = "doc_hub._builtins.parsers.markdown:MarkdownParser"

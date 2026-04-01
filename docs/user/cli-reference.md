@@ -69,7 +69,7 @@ doc-hub docs browse CORPUS [options]
 |------|------|---------|-------------|
 | `corpus` | string | **required** | Corpus slug to browse. |
 | `--path PATH` | string | none | Restrict output to this document subtree path. |
-| `--depth N` | int | none | Maximum depth below the selected root path. |
+| `--depth N` | int | none | Maximum number of levels to show below the root (or below `--path` if specified). |
 | `--json` | flag | false | Emit raw JSON tree nodes instead of rendered text. |
 
 ### Output
@@ -100,10 +100,10 @@ doc-hub docs browse pydantic-ai --json
 
 ## `doc-hub docs read`
 
-Read a document or a specific section from a corpus.
+Read a document from a corpus by its short document ID.
 
 ```bash
-doc-hub docs read CORPUS DOC_PATH_OR_ID [options]
+doc-hub docs read CORPUS DOC_ID [options]
 ```
 
 ### Flags
@@ -111,21 +111,18 @@ doc-hub docs read CORPUS DOC_PATH_OR_ID [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `corpus` | string | **required** | Corpus slug containing the document. |
-| `doc_path` | string | **required** | Document path or short document ID from `doc-hub docs browse`. |
-| `--section SECTION_PATH` | string | none | Restrict output to one section and its descendants. |
+| `doc_id` | string | **required** | Short document ID from `doc-hub docs browse` output (e.g. `abc123`). |
 | `--json` | flag | false | Emit the same structured payload shape as the MCP read tool. |
 
 ### Examples
 
 ```bash
-# Read a document
-doc-hub docs read pydantic-ai agents
-
-# Read one section and its descendants
-doc-hub docs read pydantic-ai agents --section "Agents > Tools"
+# Browse to find a document ID, then read it
+doc-hub docs browse pydantic-ai
+doc-hub docs read pydantic-ai abc123
 
 # Machine-readable output
-doc-hub docs read pydantic-ai agents --json
+doc-hub docs read pydantic-ai abc123 --json
 ```
 
 ---
@@ -230,6 +227,7 @@ doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [op
 | `--slug SLUG` | string | slugified name | Override the auto-derived slug. |
 | `--no-index` | flag | false | Register the corpus only; skip the pipeline run. |
 | `--url-pattern PATTERN` | string | none | URL pattern filter (llms_txt only). |
+| `--url-suffix SUFFIX` | string | none | Suffix appended to each extracted URL before downloading, e.g. `.md` (llms_txt only). |
 | `--base-url URL` | string | none | Base URL override (llms_txt only). |
 | `--workers N` | int | 20 | Download concurrency (llms_txt only). |
 | `--retries N` | int | 3 | HTTP retry count per URL (llms_txt only). |
@@ -241,6 +239,9 @@ doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [op
 ```bash
 # Register and index a corpus from an llms.txt file
 doc-hub pipeline add "Pydantic AI" --strategy llms_txt --url https://ai.pydantic.dev/llms.txt
+
+# Sites whose index lists bare URLs but serve pages with a .md extension (e.g. Deno)
+doc-hub pipeline add "Deno" --strategy llms_txt --url https://docs.deno.com/llms-summary.txt --url-suffix .md
 
 # Register a local directory corpus without running the pipeline
 doc-hub pipeline add "My Docs" --strategy local_dir --path ./my-docs --no-index

@@ -92,6 +92,33 @@ class MarkdownParser:
             return {}
 
     @staticmethod
+    def _strip_frontmatter(text: str) -> tuple[str, str | None]:
+        """Strip YAML frontmatter and extract the title field.
+
+        Returns:
+            (body, title) where title is the ``title:`` value from the
+            frontmatter, or None if no frontmatter / no title key was found.
+            Line numbers in the returned body start at 1 (frontmatter removed).
+        """
+        if not text.startswith("---"):
+            return text, None
+        rest = text[3:]
+        end = rest.find("\n---")
+        if end == -1:
+            return text, None
+        frontmatter = rest[:end]
+        body = rest[end + 4:].lstrip("\n")
+
+        title: str | None = None
+        for line in frontmatter.splitlines():
+            m = re.match(r"^title:\s*(.+)$", line.strip())
+            if m:
+                title = m.group(1).strip().strip("\"'")
+                break
+
+        return body, title
+
+    @staticmethod
     def _is_fence_marker(line: str) -> bool:
         """Return True if line starts/ends a fenced code block."""
         stripped = line.strip()
@@ -192,17 +219,20 @@ class MarkdownParser:
         source_url: str,
     ) -> list[Chunk]:
         """Split a markdown document into chunks at heading boundaries."""
+        text, fm_title = self._strip_frontmatter(text)
         headings = self._parse_headings(text)
         lines = text.split("\n")
         chunks: list[Chunk] = []
+
+        fallback_title = fm_title or source_file.removesuffix(".md")
 
         if not headings:
             # No headings — treat entire file as one chunk
             chunks.append(self._make_chunk(
                 source_file=source_file,
                 source_url=source_url,
-                section_path=source_file.removesuffix(".md"),
-                heading=source_file.removesuffix(".md"),
+                section_path=fallback_title,
+                heading=fallback_title,
                 heading_level=0,
                 content=text,
                 start_line=1,
@@ -215,11 +245,12 @@ class MarkdownParser:
         if first_heading_line > 1:
             preamble = "\n".join(lines[:first_heading_line - 1]).strip()
             if preamble:
+                preamble_label = fm_title or "(preamble)"
                 chunks.append(self._make_chunk(
                     source_file=source_file,
                     source_url=source_url,
-                    section_path="(preamble)",
-                    heading="(preamble)",
+                    section_path=preamble_label,
+                    heading=preamble_label,
                     heading_level=0,
                     content=preamble,
                     start_line=1,

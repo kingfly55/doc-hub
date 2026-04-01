@@ -41,6 +41,8 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["workers"] = args.workers
         if args.retries is not None:
             config["retries"] = args.retries
+        if args.url_suffix:
+            config["url_suffix"] = args.url_suffix
 
     if strategy == "git_repo":
         if args.branch:
@@ -201,6 +203,7 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--url", default=None, help="URL for llms_txt, sitemap, or git_repo strategies")
     add_parser.add_argument("--path", default=None, help="Local directory path for local_dir strategy")
     add_parser.add_argument("--url-pattern", default=None, help="Regex to filter doc URLs (llms_txt)")
+    add_parser.add_argument("--url-suffix", default=None, help="Suffix appended to each extracted URL, e.g. '.md' (llms_txt)")
     add_parser.add_argument("--base-url", default=None, help="Base URL for filename generation (llms_txt)")
     add_parser.add_argument("--workers", type=int, default=None, help="Download concurrency (llms_txt)")
     add_parser.add_argument("--retries", type=int, default=None, help="Per-URL retry count (llms_txt)")
