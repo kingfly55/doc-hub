@@ -618,8 +618,10 @@ async def test_get_document_tree_with_depth_filter_relative():
     with patch("doc_hub.documents._synthetic_tree_fallback", new=AsyncMock(return_value=[])):
         await get_document_tree(pool, "test-corpus", path="guides", max_depth=2)
 
-    sql = pool.fetch.call_args.args[0]
-    assert "depth <= $3 + $4" in sql
+    sql, *args = pool.fetch.call_args.args
+    # root_depth for "guides" (0 slashes) is 0, so absolute cutoff = 0 + 2 = 2
+    assert "depth <= $3" in sql
+    assert args[2] == 2
 
 
 @pytest.mark.asyncio
