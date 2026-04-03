@@ -25,7 +25,7 @@ from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
-DEFAULT_CLEAN_WORKERS = 5
+DEFAULT_CLEAN_WORKERS = 10
 
 DEFAULT_CLEAN_PROMPT = """\
 You are a web content extractor. You will be given raw markdown scraped from a webpage. Your job is to return ONLY the main page content as clean markdown.

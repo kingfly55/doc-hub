@@ -190,11 +190,15 @@ class SitemapFetcher:
     Entry point name: "sitemap"
 
     Required fetch_config keys:
-        url (str): URL to the sitemap.xml.gz file.
+        url (str): URL to the sitemap.xml or sitemap.xml.gz file.
 
     Optional fetch_config keys:
-        workers (int): Download concurrency (default 5).
-        retries (int): Per-URL retry count (default 3).
+        url_prefix (str): Only fetch URLs whose full URL starts with this prefix.
+        base_url (str):   Override the base URL used for filename derivation.
+                          Defaults to the scheme+host of the sitemap URL.
+        workers (int):    Download concurrency (default 5).
+        retries (int):    Per-URL retry count (default 3).
+        clean (bool):     Run LLM cleaning after download (default false).
 
     Required environment variables:
         JINA_API_KEY: API key for Jina Reader (r.jina.ai).
@@ -216,18 +220,24 @@ class SitemapFetcher:
         sitemap_url: str = fetch_config["url"]
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
-        base_url = _derive_base_url(sitemap_url)
+        url_prefix: str | None = fetch_config.get("url_prefix")
+        # base_url drives filename generation: explicit config > url_prefix > sitemap host
+        base_url: str = fetch_config.get("base_url") or url_prefix or _derive_base_url(sitemap_url)
 
-        # 1. Download and decompress the sitemap
+        # 1. Download the sitemap (supports both plain XML and gzip)
         log.info("[%s] Fetching sitemap from %s", corpus_slug, sitemap_url)
         timeout = aiohttp.ClientTimeout(total=TIMEOUT)
         connector = aiohttp.TCPConnector(family=socket.AF_INET)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get(sitemap_url) as resp:
                 resp.raise_for_status()
-                gz_bytes = await resp.read()
+                raw_bytes = await resp.read()
 
-        xml_content = gzip.decompress(gz_bytes).decode()
+        # Decompress if gzip, otherwise decode directly
+        try:
+            xml_content = gzip.decompress(raw_bytes).decode()
+        except (gzip.BadGzipFile, OSError):
+            xml_content = raw_bytes.decode()
 
         # 2. Parse URLs from sitemap XML
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -235,6 +245,14 @@ class SitemapFetcher:
 
         upstream_urls = parse_sitemap_xml(xml_content)
         log.info("[%s] Found %d unique URLs in sitemap", corpus_slug, len(upstream_urls))
+
+        # Filter to url_prefix if specified
+        if url_prefix:
+            upstream_urls = [u for u in upstream_urls if u.startswith(url_prefix)]
+            log.info(
+                "[%s] Filtered to %d URLs matching prefix %r",
+                corpus_slug, len(upstream_urls), url_prefix,
+            )
 
         # 3. Build sections from URL structure
         sections = build_sections_from_urls(upstream_urls, base_url)
@@ -264,10 +282,11 @@ class SitemapFetcher:
 
         # 5c. LLM cleaning (opt-in via fetch_config["clean"])
         if fetch_config.get("clean") and download_results:
-            from doc_hub.clean import clean_corpus  # noqa: PLC0415
+            from doc_hub.clean import DEFAULT_CLEAN_WORKERS, clean_corpus  # noqa: PLC0415
 
+            clean_workers: int = int(fetch_config.get("clean_workers", DEFAULT_CLEAN_WORKERS))
             log.info("[%s] Running LLM cleaning on fetched pages", corpus_slug)
-            await clean_corpus(output_dir, workers=workers)
+            await clean_corpus(output_dir, workers=clean_workers)
 
         # 6. Log sync summary
         new_count = 0

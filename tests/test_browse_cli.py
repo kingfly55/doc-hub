@@ -8,8 +8,6 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doc_hub.mcp_server import LARGE_DOC_THRESHOLD as MCP_LARGE_DOC_THRESHOLD
-
 
 def test_browse_main_importable():
     from doc_hub.browse import browse_main
@@ -126,41 +124,6 @@ def test_render_tree_preserves_input_order():
     assert _render_tree(nodes).splitlines() == ["Second [group]", "First [group]"]
 
 
-def test_render_outline_basic():
-    from doc_hub.browse import _render_outline
-
-    sections = [
-        {"heading": "Overview", "heading_level": 1, "char_count": 1200},
-        {"heading": "Install", "heading_level": 2, "char_count": 345},
-    ]
-
-    assert _render_outline(sections).splitlines() == [
-        "Overview 1,200 chars",
-        "  Install 345 chars",
-    ]
-
-
-def test_render_outline_nested_headings():
-    from doc_hub.browse import _render_outline
-
-    sections = [
-        {"heading": "Top", "heading_level": 1, "char_count": 10},
-        {"heading": "Mid", "heading_level": 2, "char_count": 20},
-        {"heading": "Deep", "heading_level": 3, "char_count": 30},
-    ]
-
-    assert _render_outline(sections).splitlines() == [
-        "Top 10 chars",
-        "  Mid 20 chars",
-        "    Deep 30 chars",
-    ]
-
-
-def test_large_doc_threshold_matches_mcp():
-    from doc_hub.browse import LARGE_DOC_THRESHOLD
-
-    assert LARGE_DOC_THRESHOLD == MCP_LARGE_DOC_THRESHOLD == 20_000
-
 
 def test_browse_main_uses_load_dotenv_and_asyncio_run():
     from doc_hub import browse as browse_module
@@ -192,8 +155,8 @@ def test_browse_main_uses_load_dotenv_and_asyncio_run():
 def test_read_main_uses_load_dotenv_and_asyncio_run():
     from doc_hub import browse as browse_module
 
-    argv = ["demo-corpus", "guide/intro"]
-    parsed_args = argparse.Namespace(corpus="demo-corpus", doc_path="guide/intro", section=None, force=False, json=False)
+    argv = ["demo-corpus", "abc123"]
+    parsed_args = argparse.Namespace(corpus="demo-corpus", doc_id="abc123", json=False)
 
     with (
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
@@ -244,60 +207,30 @@ def test_browse_async_json_output():
 def test_read_not_found_prints_message_and_returns_successfully():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", doc_path="missing/doc", section=None, force=False, json=False)
+    args = argparse.Namespace(corpus="demo", doc_id="missing1", json=False)
     pool = MagicMock()
 
     stdout = io.StringIO()
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
-        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value=None)),
-        patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=[])),
+        patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=(None, []))),
         redirect_stdout(stdout),
     ):
         pool.close = AsyncMock()
         import asyncio
         asyncio.run(browse_module.read(args))
 
-    assert "Document 'missing/doc' not found in corpus 'demo'" in stdout.getvalue()
+    assert "Document 'missing1' not found in corpus 'demo'" in stdout.getvalue()
 
 
-def test_read_json_outline_for_large_document():
+def test_read_json_full_output():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", doc_path="guide/large", section=None, force=False, json=True)
+    args = argparse.Namespace(corpus="demo", doc_id="abc123", json=True)
     pool = MagicMock()
     chunks = [
-        {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 5, "source_url": "https://example.com/doc", "content": "Title"},
-        {"heading": "Deep Dive", "heading_level": 2, "section_path": "Title > Deep Dive", "char_count": browse_module.LARGE_DOC_THRESHOLD + 1, "source_url": "https://example.com/doc", "content": "X"},
-    ]
-
-    stdout = io.StringIO()
-    with (
-        patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
-        patch.object(browse_module, "ensure_schema", new=AsyncMock()),
-        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")),
-        patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)),
-        redirect_stdout(stdout),
-    ):
-        pool.close = AsyncMock()
-        import asyncio
-        asyncio.run(browse_module.read(args))
-
-    payload = json.loads(stdout.getvalue())
-    assert payload["mode"] == "outline"
-    assert payload["doc_path"] == "guide/large"
-    assert "sections" in payload
-    assert "hint" in payload
-
-
-def test_read_json_full_for_force_or_section():
-    from doc_hub import browse as browse_module
-
-    force_args = argparse.Namespace(corpus="demo", doc_path="guide/large", section=None, force=True, json=True)
-    pool = MagicMock()
-    chunks = [
-        {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": browse_module.LARGE_DOC_THRESHOLD + 5, "source_url": "https://example.com/doc", "content": "First"},
+        {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 5, "source_url": "https://example.com/doc", "content": "First"},
         {"heading": "Deep Dive", "heading_level": 2, "section_path": "Title > Deep Dive", "char_count": 10, "source_url": "https://example.com/doc", "content": "Second"},
     ]
 
@@ -305,36 +238,7 @@ def test_read_json_full_for_force_or_section():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
-        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")) as mock_resolve_doc_path,
-        patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)) as mock_get_chunks,
-        redirect_stdout(stdout),
-    ):
-        pool.close = AsyncMock()
-        import asyncio
-        asyncio.run(browse_module.read(force_args))
-
-    payload = json.loads(stdout.getvalue())
-    assert payload["mode"] == "full"
-    assert payload["content"] == "First\n\nSecond"
-    mock_resolve_doc_path.assert_awaited_once_with(pool, "demo", "guide/large")
-    mock_get_chunks.assert_awaited_once_with(pool, "demo", "guide/large", section=None)
-
-
-def test_read_resolves_short_doc_id_before_loading_chunks():
-    from doc_hub import browse as browse_module
-
-    args = argparse.Namespace(corpus="demo", doc_path="abc123", section=None, force=True, json=True)
-    pool = MagicMock()
-    chunks = [
-        {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 10, "source_url": "https://example.com/doc", "content": "First"},
-    ]
-
-    stdout = io.StringIO()
-    with (
-        patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
-        patch.object(browse_module, "ensure_schema", new=AsyncMock()),
-        patch.object(browse_module, "resolve_doc_path", new=AsyncMock(return_value="guide/large")) as mock_resolve_doc_path,
-        patch.object(browse_module, "get_document_chunks", new=AsyncMock(return_value=chunks)) as mock_get_chunks,
+        patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=("guide/large", chunks))) as mock_get_chunks,
         redirect_stdout(stdout),
     ):
         pool.close = AsyncMock()
@@ -342,9 +246,10 @@ def test_read_resolves_short_doc_id_before_loading_chunks():
         asyncio.run(browse_module.read(args))
 
     payload = json.loads(stdout.getvalue())
+    assert payload["mode"] == "full"
+    assert payload["content"] == "First\n\nSecond"
     assert payload["doc_path"] == "guide/large"
-    mock_resolve_doc_path.assert_awaited_once_with(pool, "demo", "abc123")
-    mock_get_chunks.assert_awaited_once_with(pool, "demo", "guide/large", section=None)
+    mock_get_chunks.assert_awaited_once_with(pool, "demo", "abc123")
 
 
 def test_pyproject_entry_points():

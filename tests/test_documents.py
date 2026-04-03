@@ -17,10 +17,10 @@ from doc_hub.documents import (
     delete_stale_documents,
     derive_doc_id,
     get_document_chunks,
+    get_document_chunks_by_doc_id,
     get_document_sections,
     get_document_tree,
     link_chunks_to_documents,
-    resolve_doc_path,
     upsert_documents,
 )
 from doc_hub.parse import Chunk
@@ -663,17 +663,6 @@ async def test_get_document_chunks_returns_ordered_with_id():
     assert "ORDER BY c.start_line" in sql
 
 
-@pytest.mark.asyncio
-async def test_get_document_chunks_with_section_filter():
-    pool = MagicMock()
-    pool.fetchrow = AsyncMock(return_value={"id": 9, "source_file": "guide.md"})
-    pool.fetch = AsyncMock(return_value=[])
-
-    await get_document_chunks(pool, "test-corpus", "guide", section="Guide > Install")
-
-    sql = pool.fetch.call_args.args[0]
-    assert "c.section_path = $3 OR c.section_path LIKE $3 || ' > %'" in sql
-
 
 @pytest.mark.asyncio
 async def test_get_document_chunks_handles_namespaced_doc_path():
@@ -687,28 +676,36 @@ async def test_get_document_chunks_handles_namespaced_doc_path():
 
 
 @pytest.mark.asyncio
-async def test_resolve_doc_path_returns_canonical_path_for_existing_doc_path():
+async def test_get_document_chunks_by_doc_id_resolves_and_returns_chunks():
     pool = MagicMock()
-    pool.fetchval = AsyncMock(return_value="guide")
+    doc_id = derive_doc_id("test-corpus", "guide/install")
+    db_rows = [MagicMock(**{"__getitem__": lambda self, k: {"id": 7, "doc_path": "guide/install"}[k]})]
+    db_rows[0].__iter__ = lambda self: iter({"id": 7, "doc_path": "guide/install"}.items())
+    # Use a simpler approach: plain dicts via asyncpg Record-like objects
+    pool.fetch = AsyncMock(side_effect=[
+        [{"id": 7, "doc_path": "guide/install"}],   # doc_documents query
+        [{"heading": "Install", "heading_level": 1, "section_path": "Install",
+          "char_count": 10, "source_file": "guide__install.md",
+          "source_url": "https://example.com", "content": "body",
+          "start_line": 1, "end_line": 5, "category": "guide", "id": 99}],  # chunks query
+    ])
 
-    result = await resolve_doc_path(pool, "test-corpus", "guide")
+    doc_path, chunks = await get_document_chunks_by_doc_id(pool, "test-corpus", doc_id)
 
-    assert result == "guide"
-    assert pool.fetchval.await_args_list[0].args[2] == "guide"
+    assert doc_path == "guide/install"
+    assert len(chunks) == 1
+    assert chunks[0]["heading"] == "Install"
 
 
 @pytest.mark.asyncio
-async def test_resolve_doc_path_falls_back_to_doc_id_lookup():
+async def test_get_document_chunks_by_doc_id_returns_none_for_unknown_id():
     pool = MagicMock()
-    pool.fetchval = AsyncMock(return_value=None)
+    pool.fetch = AsyncMock(return_value=[{"id": 7, "doc_path": "guide/install"}])
 
-    with patch(
-        "doc_hub.documents.get_document_tree",
-        new=AsyncMock(return_value=[{"doc_path": "guide/install", "doc_id": "abc123"}]),
-    ):
-        result = await resolve_doc_path(pool, "test-corpus", "abc123")
+    doc_path, chunks = await get_document_chunks_by_doc_id(pool, "test-corpus", "unknown")
 
-    assert result == "guide/install"
+    assert doc_path is None
+    assert chunks == []
 
 
 @pytest.mark.asyncio

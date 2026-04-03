@@ -14,7 +14,7 @@ import logging
 from dotenv import load_dotenv
 
 from doc_hub.db import create_pool, ensure_schema
-from doc_hub.documents import get_document_chunks, get_document_tree, resolve_doc_path
+from doc_hub.documents import get_document_chunks_by_doc_id, get_document_tree
 
 log = logging.getLogger(__name__)
 
@@ -58,19 +58,14 @@ async def read(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
-        resolved_doc_path = await resolve_doc_path(pool, args.corpus, args.doc_path)
-        if resolved_doc_path is None:
-            print(f"Document '{args.doc_path}' not found in corpus '{args.corpus}'")
-            return
-
-        chunks = await get_document_chunks(pool, args.corpus, resolved_doc_path, section=args.section)
-        if not chunks:
-            print(f"Document '{args.doc_path}' not found in corpus '{args.corpus}'")
+        doc_path, chunks = await get_document_chunks_by_doc_id(pool, args.corpus, args.doc_id)
+        if doc_path is None or not chunks:
+            print(f"Document '{args.doc_id}' not found in corpus '{args.corpus}'")
             return
 
         title = next(
             (str(chunk.get("heading", "")) for chunk in chunks if chunk.get("heading_level") == 1),
-            resolved_doc_path,
+            doc_path,
         )
         source_url = str(chunks[0].get("source_url", ""))
         total_chars = sum(int(chunk.get("char_count", 0)) for chunk in chunks)
@@ -78,7 +73,7 @@ async def read(args: argparse.Namespace) -> None:
 
         payload = {
             "mode": "full",
-            "doc_path": resolved_doc_path,
+            "doc_path": doc_path,
             "title": title,
             "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
             "source_url": source_url,
@@ -113,8 +108,7 @@ def build_read_parser(parser: argparse.ArgumentParser | None = None) -> argparse
         description="Read a document from a corpus.",
     )
     parser.add_argument("corpus", help="Corpus slug containing the document")
-    parser.add_argument("doc_path", help="Document path or short document ID to read")
-    parser.add_argument("--section", help="Optional section path to read")
+    parser.add_argument("doc_id", help="Document ID shown in doc-hub docs browse output")
     parser.add_argument("--json", action="store_true", help="Emit JSON output")
     return parser
 

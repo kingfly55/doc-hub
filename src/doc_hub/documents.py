@@ -374,9 +374,9 @@ async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max
         next_index += 1
         root_depth = path.count("/") if not path.startswith("_section/") else max(len(path.split("/")) - 2, 0)
     if max_depth is not None:
-        conditions.append(f"depth <= ${next_index} + ${next_index + 1}")
-        args.extend([root_depth, max_depth])
-        next_index += 2
+        conditions.append(f"depth <= ${next_index}")
+        args.append(root_depth + max_depth)
+        next_index += 1
 
     sql = f"""
     SELECT doc_path, title, source_url, depth, is_group, total_chars, section_count
@@ -465,23 +465,54 @@ def _source_file_from_doc_path(doc_path: str) -> str:
     return f"{doc_path.replace('/', '__')}.md"
 
 
-async def resolve_doc_path(pool, corpus_slug: str, doc_ref: str) -> str | None:
-    existing_path = await pool.fetchval(
-        "SELECT doc_path FROM doc_documents WHERE corpus_id = $1 AND doc_path = $2 LIMIT 1",
+async def get_document_chunks_by_doc_id(
+    pool, corpus_slug: str, doc_id: str
+) -> tuple[str | None, list[dict]]:
+    """Return (doc_path, chunks) for the document identified by *doc_id*.
+
+    Resolves the short doc_id to a doc_path using a lightweight query against
+    doc_documents (no full tree fetch), then loads chunks via the document_id
+    integer FK.  Returns (None, []) if the doc_id is not found.
+    """
+    rows = await pool.fetch(
+        "SELECT id, doc_path FROM doc_documents WHERE corpus_id = $1 AND is_group = false",
         corpus_slug,
-        doc_ref,
     )
-    if existing_path is not None:
-        return str(existing_path)
+    if not rows:
+        return None, []
 
-    doc_rows = await get_document_tree(pool, corpus_slug)
-    matches = [str(row["doc_path"]) for row in doc_rows if row.get("doc_id") == doc_ref]
-    if len(matches) == 1:
-        return matches[0]
-    return None
+    doc_paths = [str(r["doc_path"]) for r in rows]
+    id_map = _build_doc_id_map(corpus_slug, doc_paths)
+
+    matched_path = next((path for path, did in id_map.items() if did == doc_id), None)
+    if matched_path is None:
+        return None, []
+
+    matched_row = next(r for r in rows if str(r["doc_path"]) == matched_path)
+    document_id = int(matched_row["id"])
+
+    sql = """
+    SELECT
+        c.id,
+        c.heading,
+        c.heading_level,
+        c.section_path,
+        c.char_count,
+        c.source_file,
+        c.source_url,
+        c.content,
+        c.start_line,
+        c.end_line,
+        c.category
+    FROM doc_chunks c
+    WHERE c.corpus_id = $1 AND c.document_id = $2
+    ORDER BY c.start_line
+    """
+    chunk_rows = await pool.fetch(sql, corpus_slug, document_id)
+    return matched_path, [dict(r) for r in chunk_rows]
 
 
-async def get_document_chunks(pool, corpus_slug: str, doc_path: str, section: str | None = None) -> list[dict]:
+async def get_document_chunks(pool, corpus_slug: str, doc_path: str) -> list[dict]:
     doc_sql = """
     SELECT id, source_file
     FROM doc_documents
@@ -489,18 +520,12 @@ async def get_document_chunks(pool, corpus_slug: str, doc_path: str, section: st
     """
     doc_row = await pool.fetchrow(doc_sql, corpus_slug, doc_path)
 
-    filters = []
-    args: list[object]
     if doc_row is not None:
-        filters.append("c.document_id = $2")
-        args = [corpus_slug, int(doc_row["id"])]
+        filter_clause = "c.document_id = $2"
+        args: list[object] = [corpus_slug, int(doc_row["id"])]
     else:
-        filters.append("c.source_file = $2")
+        filter_clause = "c.source_file = $2"
         args = [corpus_slug, _source_file_from_doc_path(doc_path)]
-
-    if section is not None:
-        filters.append("(c.section_path = $3 OR c.section_path LIKE $3 || ' > %')")
-        args.append(section)
 
     sql = f"""
     SELECT
@@ -516,7 +541,7 @@ async def get_document_chunks(pool, corpus_slug: str, doc_path: str, section: st
         c.end_line,
         c.category
     FROM doc_chunks c
-    WHERE c.corpus_id = $1 AND {' AND '.join(filters)}
+    WHERE c.corpus_id = $1 AND {filter_clause}
     ORDER BY c.start_line
     """
     rows = await pool.fetch(sql, *args)
