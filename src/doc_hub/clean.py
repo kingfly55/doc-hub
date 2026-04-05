@@ -21,11 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
+import openai
 from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
 DEFAULT_CLEAN_WORKERS = 10
+DEFAULT_CLEAN_RETRIES = 3
+DEFAULT_CLEAN_BACKOFF_BASE = 2.0   # seconds; doubles each retry
+MAX_CONSECUTIVE_FAILURES = 5       # circuit breaker threshold
 
 DEFAULT_CLEAN_PROMPT = """\
 You are a web content extractor. You will be given raw markdown scraped from a webpage. Your job is to return ONLY the main page content as clean markdown.
@@ -132,31 +136,75 @@ class CleanResult(NamedTuple):
     error: str | None = None
 
 
-async def clean_markdown(content: str, config: CleanConfig) -> str:
-    """Send markdown through an LLM to clean it.
+async def clean_markdown(
+    content: str,
+    config: CleanConfig,
+    retries: int = DEFAULT_CLEAN_RETRIES,
+    backoff_base: float = DEFAULT_CLEAN_BACKOFF_BASE,
+) -> str:
+    """Send markdown through an LLM to clean it, with retry and backoff.
+
+    Retries on rate limits (429), connection errors, and 5xx server errors.
+    Raises immediately on auth errors (401/403) or bad request (400) since
+    retrying those will never help.
 
     Args:
-        content: Raw markdown content.
-        config:  LLM cleaning configuration.
+        content:      Raw markdown content.
+        config:       LLM cleaning configuration.
+        retries:      Max attempts (default 3).
+        backoff_base: Base backoff in seconds; doubles each retry (default 2s).
 
     Returns:
         Cleaned markdown string.
+
+    Raises:
+        The last exception if all retries are exhausted.
     """
     client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
-    response = await client.chat.completions.create(
-        model=config.model,
-        messages=[
-            {"role": "system", "content": config.prompt},
-            {"role": "user", "content": content},
-        ],
-    )
-    return response.choices[0].message.content or ""
+    last_exc: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            response = await client.chat.completions.create(
+                model=config.model,
+                messages=[
+                    {"role": "system", "content": config.prompt},
+                    {"role": "user", "content": content},
+                ],
+            )
+            return response.choices[0].message.content or ""
+
+        except openai.RateLimitError as exc:
+            wait = backoff_base ** attempt
+            log.warning("Rate limited by LLM API (attempt %d/%d) — waiting %.0fs", attempt, retries, wait)
+            await asyncio.sleep(wait)
+            last_exc = exc
+
+        except openai.APIStatusError as exc:
+            if exc.status_code in (500, 502, 503, 504):
+                wait = backoff_base ** attempt
+                log.warning("LLM API server error %d (attempt %d/%d) — waiting %.0fs", exc.status_code, attempt, retries, wait)
+                await asyncio.sleep(wait)
+                last_exc = exc
+            else:
+                # 400, 401, 403, etc. — retrying won't help
+                raise
+
+        except (openai.APIConnectionError, openai.APITimeoutError) as exc:
+            wait = backoff_base ** attempt
+            log.warning("LLM API connection error (attempt %d/%d) — waiting %.0fs: %s", attempt, retries, wait, exc)
+            await asyncio.sleep(wait)
+            last_exc = exc
+
+    raise last_exc  # type: ignore[misc]
 
 
 async def clean_corpus(
     output_dir: Path,
     *,
     workers: int = DEFAULT_CLEAN_WORKERS,
+    retries: int = DEFAULT_CLEAN_RETRIES,
+    max_consecutive_failures: int = MAX_CONSECUTIVE_FAILURES,
 ) -> list[CleanResult]:
     """Clean markdown files in a corpus directory.
 
@@ -164,13 +212,18 @@ async def clean_corpus(
     ``content_hash != clean_hash``), sends them through the LLM, writes
     the cleaned content back, and updates the manifest with ``clean_hash``.
 
+    Includes a circuit breaker: if ``max_consecutive_failures`` tasks fail
+    in a row, the remaining work is aborted and all pending tasks are
+    returned as failed with error ``"aborted (circuit breaker)"``.
+
     Args:
-        output_dir: Path to the corpus raw/ directory containing .md files
-                    and manifest.json.
-        workers:    Concurrency limit for LLM API calls.
+        output_dir:               Path to the corpus raw/ directory.
+        workers:                  Concurrency limit for LLM API calls.
+        retries:                  Per-file retry count passed to clean_markdown.
+        max_consecutive_failures: Consecutive failures before aborting.
 
     Returns:
-        List of CleanResult for each file that was processed.
+        List of CleanResult for each file that was processed or aborted.
     """
     config = get_clean_config()
 
@@ -182,7 +235,6 @@ async def clean_corpus(
     manifest_data = json.loads(manifest_path.read_text())
     files = manifest_data.get("files", [])
 
-    # Find files that need cleaning
     to_clean: list[dict] = []
     for entry in files:
         if not entry.get("success"):
@@ -199,26 +251,52 @@ async def clean_corpus(
     log.info("Cleaning %d of %d files", len(to_clean), len(files))
 
     sem = asyncio.Semaphore(workers)
+    abort = asyncio.Event()
+    state = {"consecutive": 0}
 
     async def _clean_one(entry: dict) -> CleanResult:
         filename = entry["filename"]
         filepath = output_dir / filename
+
+        if abort.is_set():
+            return CleanResult(filename=filename, success=False, error="aborted (circuit breaker)")
+
         async with sem:
+            if abort.is_set():
+                return CleanResult(filename=filename, success=False, error="aborted (circuit breaker)")
+
             try:
                 if not filepath.exists():
                     return CleanResult(filename=filename, success=False, error="file not found")
 
                 raw_content = filepath.read_text(encoding="utf-8")
-                cleaned = await clean_markdown(raw_content, config)
+                cleaned = await clean_markdown(raw_content, config, retries=retries)
                 filepath.write_text(cleaned, encoding="utf-8")
+                state["consecutive"] = 0
                 log.info("Cleaned: %s", filename)
                 return CleanResult(filename=filename, success=True)
+
             except Exception as exc:
-                log.warning("Failed to clean %s: %s", filename, exc)
+                state["consecutive"] += 1
+                log.warning(
+                    "Failed to clean %s (%d consecutive): %s",
+                    filename, state["consecutive"], exc,
+                )
+                if state["consecutive"] >= max_consecutive_failures:
+                    abort.set()
+                    log.error(
+                        "Circuit breaker tripped after %d consecutive failures — "
+                        "aborting remaining clean tasks. Check your LLM endpoint.",
+                        state["consecutive"],
+                    )
                 return CleanResult(filename=filename, success=False, error=str(exc))
 
     tasks = [asyncio.create_task(_clean_one(entry)) for entry in to_clean]
     results = await asyncio.gather(*tasks)
+
+    ok = sum(1 for r in results if r.success)
+    fail = sum(1 for r in results if not r.success and r.error != "aborted (circuit breaker)")
+    aborted = sum(1 for r in results if r.error == "aborted (circuit breaker)")
 
     # Update manifest with clean_hash for successfully cleaned files
     cleaned_set = {r.filename for r in results if r.success}
@@ -227,10 +305,14 @@ async def clean_corpus(
             entry["clean_hash"] = entry["content_hash"]
 
     manifest_path.write_text(json.dumps(manifest_data, indent=2))
-    log.info("Manifest updated with clean hashes")
 
-    ok = sum(1 for r in results if r.success)
-    fail = sum(1 for r in results if not r.success)
-    log.info("Clean complete: %d succeeded, %d failed", ok, fail)
+    if aborted:
+        log.error(
+            "Clean aborted: %d succeeded, %d failed, %d cancelled. "
+            "Re-run after fixing the LLM endpoint — already-cleaned files will be skipped.",
+            ok, fail, aborted,
+        )
+    else:
+        log.info("Clean complete: %d succeeded, %d failed", ok, fail)
 
     return list(results)

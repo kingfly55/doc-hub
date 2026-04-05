@@ -12,6 +12,7 @@ dependencies = [
     "openai>=1.0",
     "python-dotenv>=1.0",
     "mcp>=1.26",
+    "pamela>=1.0",
 ]
 
 [build-system]
