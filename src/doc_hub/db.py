@@ -484,6 +484,23 @@ async def update_corpus_fetch_config(
     log.debug("Updated fetch_config for corpus: %s", slug)
 
 
+async def delete_corpus(pool: asyncpg.Pool, slug: str) -> bool:
+    """Delete a corpus and all its associated data from the database.
+
+    Child rows in doc_chunks, doc_index_meta, and doc_documents are removed
+    automatically via ON DELETE CASCADE.
+
+    Args:
+        pool: asyncpg connection pool.
+        slug: Corpus slug to delete.
+
+    Returns:
+        True if a row was deleted, False if the slug was not found.
+    """
+    result = await pool.execute("DELETE FROM doc_corpora WHERE slug = $1", slug)
+    return result == "DELETE 1"
+
+
 async def update_corpus_stats(pool: asyncpg.Pool, slug: str, total_chunks: int) -> None:
     """Update post-indexing stats for a corpus.
 
