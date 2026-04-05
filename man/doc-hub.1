@@ -21,17 +21,14 @@ Search one or more corpora.
 .B doc-hub docs browse CORPUS
 Browse persisted corpus documents and short IDs.
 .TP
-.B doc-hub docs read CORPUS DOC_PATH_OR_ID
-Read a document by path or short document ID.
+.B doc-hub docs read CORPUS DOC_ID
+Read a document by its short document ID (shown in browse output).
 .TP
-.B doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [--url URL] [--path PATH] [--slug SLUG] [--no-index] [--url-pattern PATTERN] [--base-url URL] [--workers N] [--retries N] [--branch BRANCH] [--docs-dir DIR]
+.B doc-hub pipeline add [<name>] [--strategy {llms_txt,sitemap,git_repo,local_dir}] [--url URL] [--path PATH] [--slug SLUG] [--no-index] [--interactive] [--use-jina] [--try-md] [--clean] [--url-pattern PATTERN] [--url-suffix SUFFIX] [--base-url URL] [--workers N] [--retries N] [--branch BRANCH] [--docs-dir DIR]
 Register a new documentation corpus and run the full indexing pipeline.
-The name is required (positional).
-The \fB\-\-strategy\fR flag selects the fetcher plugin.
-Strategy-specific flags: \fB\-\-url\fR (required for llms_txt, sitemap, git_repo),
-\fB\-\-path\fR (required for local_dir).
-A slug is auto-derived from the name unless \fB\-\-slug\fR is provided.
-Use \fB\-\-no-index\fR to register without running the pipeline.
+The name and strategy are optional when \fB\-\-interactive\fR (\fB\-i\fR) is used — guided prompts detect strategy from the URL and ask follow-up questions.
+Use \fB\-\-use-jina\fR or \fB\-\-try-md\fR with \fBllms_txt\fR to handle non-markdown URLs; requires \fBJINA_API_KEY\fR.
+Use \fB\-\-clean\fR to run an LLM cleaning pass after download.
 .TP
 .B doc-hub pipeline clean <slug>
 Clean fetched markdown for a corpus via an LLM.
@@ -39,6 +36,9 @@ Strips navigation, footers, breadcrumbs, and scraping artifacts while preserving
 Only processes files that have changed since the last clean.
 After the first run, sets \fBclean=true\fR in the corpus fetch config so future fetches auto-clean.
 Requires \fBDOC_HUB_CLEAN_MODEL\fR, \fBDOC_HUB_CLEAN_API_KEY\fR, and \fBDOC_HUB_CLEAN_BASE_URL\fR.
+.TP
+.B doc-hub pipeline remove <slug> [--keep-data]
+Permanently remove a corpus and all its data. Prompts for the current user's login password via PAM before proceeding (prevents accidental or agent-triggered deletion). Deletes the corpus row from the database (cascades to chunks, documents, and index metadata) and removes local raw/chunk files from disk. Use \fB\-\-keep-data\fR to delete only the database rows and leave local files intact.
 .TP
 .B doc-hub pipeline run --corpus CORPUS
 Run the pipeline against a corpus.
@@ -88,7 +88,6 @@ Browse and read documentation:
 .RS
 .nf
 doc-hub docs browse pydantic-ai
-doc-hub docs read pydantic-ai agents
 doc-hub docs read pydantic-ai abc123
 .fi
 .RE
@@ -140,6 +139,14 @@ Clean fetched documents for a corpus:
 doc-hub pipeline clean camoufox
 .fi
 .RE
+.PP
+Remove a corpus and all its data:
+.PP
+.RS
+.nf
+doc-hub pipeline remove my-corpus
+.fi
+.RE
 .SH ENVIRONMENT
 .TP
 .B DOC_HUB_DATA_DIR
@@ -156,6 +163,9 @@ Base URL for the OpenAI-compatible API.
 .TP
 .B DOC_HUB_CLEAN_PROMPT
 Optional system prompt override for the cleaning LLM. Falls back to a built-in default.
+.TP
+.B JINA_API_KEY
+API key for Jina Reader (r.jina.ai). Required when using \fBpipeline add\fR with \fB\-\-use-jina\fR, \fB\-\-try-md\fR, or the \fBsitemap\fR strategy.
 .SH FILES
 .TP
 .I $DOC_HUB_DATA_DIR/env

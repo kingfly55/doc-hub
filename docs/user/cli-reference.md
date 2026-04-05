@@ -213,19 +213,23 @@ doc-hub pipeline run --corpus pydantic-ai --stage tree
 Register a new documentation corpus and run the indexing pipeline.
 
 ```bash
-doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [options]
+doc-hub pipeline add [<name>] [--strategy STRATEGY] [options]
 ```
 
 ### Arguments and flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `name` | string | **required** | Human-readable corpus name (positional). |
-| `--strategy` | choice | **required** | Fetcher plugin. Choices: `llms_txt`, `sitemap`, `git_repo`, `local_dir`. |
+| `name` | string | optional | Human-readable corpus name (positional). Optional when using `--interactive`. |
+| `--strategy` | choice | optional | Fetcher plugin. Choices: `llms_txt`, `sitemap`, `git_repo`, `local_dir`. Optional when using `--interactive`. |
 | `--url URL` | string | none | URL for `llms_txt`, `sitemap`, or `git_repo` strategies. |
 | `--path PATH` | string | none | Local directory path for the `local_dir` strategy. |
 | `--slug SLUG` | string | slugified name | Override the auto-derived slug. |
 | `--no-index` | flag | false | Register the corpus only; skip the pipeline run. |
+| `--interactive`, `-i` | flag | false | Guided interactive setup. Detects strategy from URL and asks follow-up questions. |
+| `--use-jina` | flag | false | Route non-`.md` URLs through Jina Reader (`llms_txt` only). Requires `JINA_API_KEY`. |
+| `--try-md` | flag | false | Try appending `.md` first; fall back to Jina on 404 (`llms_txt` only). Requires `JINA_API_KEY`. |
+| `--clean` | flag | false | Run LLM cleaning pass after download (`llms_txt` and `sitemap`). |
 | `--url-pattern PATTERN` | string | none | URL pattern filter (llms_txt only). |
 | `--url-suffix SUFFIX` | string | none | Suffix appended to each extracted URL before downloading, e.g. `.md` (llms_txt only). |
 | `--base-url URL` | string | none | Base URL override (llms_txt only). |
@@ -237,6 +241,15 @@ doc-hub pipeline add <name> --strategy {llms_txt,sitemap,git_repo,local_dir} [op
 ### Examples
 
 ```bash
+# Guided interactive setup (detects strategy from URL)
+doc-hub pipeline add --interactive
+
+# llms.txt with HTML pages — route through Jina
+doc-hub pipeline add "Gastown" --strategy llms_txt --url https://gastown.dev/llms.txt --use-jina
+
+# llms.txt where .md versions may exist — try .md first, fall back to Jina
+doc-hub pipeline add "My Docs" --strategy llms_txt --url https://example.com/llms.txt --try-md
+
 # Register and index a corpus from an llms.txt file
 doc-hub pipeline add "Pydantic AI" --strategy llms_txt --url https://ai.pydantic.dev/llms.txt
 
@@ -266,7 +279,7 @@ doc-hub pipeline clean <slug>
 ### Behavior
 
 1. Loads the corpus manifest and identifies files where `content_hash != clean_hash` (changed since last clean or never cleaned).
-2. Sends each file through an OpenAI-compatible LLM to strip navigation, footers, and artifacts.
+2. Sends each file through an OpenAI-compatible LLM to strip navigation, footers, and artifacts. Includes retry with exponential backoff (up to 3 attempts per file) and a circuit breaker: if 5 consecutive files fail, remaining files are cancelled and a clear error is logged. Re-running the command will only process files not yet successfully cleaned.
 3. Writes cleaned content back to disk and updates the manifest with `clean_hash` values.
 4. Sets `clean: true` in the corpus's `fetch_config` so future fetches auto-clean.
 
@@ -287,6 +300,39 @@ doc-hub pipeline clean camoufox
 
 # Future fetches for this corpus will auto-clean
 doc-hub pipeline logs camoufox
+```
+
+---
+
+## `doc-hub pipeline remove`
+
+Permanently remove a corpus, all its database rows, and its local files.
+
+```bash
+doc-hub pipeline remove <slug> [options]
+```
+
+### Arguments and flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `slug` | string | **required** | Corpus slug to remove (positional). |
+| `--keep-data` | flag | false | Delete from DB only; leave local raw/chunk files on disk. |
+
+### Behavior
+
+1. Prompts for the current user's login password via PAM. Wrong password exits immediately — this gate prevents agents or scripts from deleting corpora without explicit human authorization.
+2. Deletes the corpus row from `doc_corpora`. Child rows in `doc_chunks`, `doc_documents`, and `doc_index_meta` are removed automatically via `ON DELETE CASCADE`.
+3. Unless `--keep-data` is set, removes the corpus local data directory (`raw/`, `chunks/`).
+
+### Examples
+
+```bash
+# Remove a corpus and all local data
+doc-hub pipeline remove my-corpus
+
+# Remove from DB only, keep local files
+doc-hub pipeline remove my-corpus --keep-data
 ```
 
 ---

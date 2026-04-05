@@ -109,10 +109,12 @@ doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 | `doc-hub man` | Print the built-in manual page |
 | `doc-hub docs list` | List registered corpora |
 | `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus, including short document IDs |
-| `doc-hub docs read` | Read a document or section by path or short document ID |
+| `doc-hub docs read` | Read a document by its short document ID (from browse output) |
 | `doc-hub docs search` | Hybrid search CLI across one or more required `--corpus` values |
-| `doc-hub pipeline add` | Register and index a new corpus (e.g. `--strategy llms_txt --url <url>`) |
+| `doc-hub pipeline add` | Register and index a new corpus. Use `--interactive`/`-i` for guided setup, or pass `--strategy` and `--url` directly. |
+| `doc-hub pipeline remove` | Remove a corpus and all its data (requires user password) |
 | `doc-hub pipeline run` | Run the fetch → parse → embed → index → tree pipeline for a corpus |
+| `doc-hub pipeline clean` | Strip navigation, footers, and scraping artifacts from fetched markdown via LLM |
 | `doc-hub pipeline logs` | View pipeline run output for a corpus |
 | `doc-hub pipeline sync-all` | Run the pipeline for all enabled corpora |
 | `doc-hub pipeline eval` | Evaluate retrieval quality |
@@ -201,7 +203,7 @@ doc-hub uses a plugin architecture based on Python entry points. Three plugin ty
 | Parser | `doc_hub.parsers` | `doc_hub.protocols.Parser` |
 | Embedder | `doc_hub.embedders` | `doc_hub.protocols.Embedder` |
 
-**Built-in plugins:** `llms_txt` fetcher, `local_dir` fetcher, `markdown` parser, `gemini` embedder.
+**Built-in fetchers:** `llms_txt`, `sitemap`, `git_repo`, `local_dir`, `direct_url`. **Built-in parser:** `markdown`. **Built-in embedder:** `gemini`.
 
 See [docs/dev/plugin-authoring.md](docs/dev/plugin-authoring.md) for a complete guide to writing plugins.
 
@@ -249,6 +251,7 @@ doc-hub stores local data (raw downloads, chunk caches, embedding caches) in an 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GEMINI_API_KEY` | — | Required for the built-in Gemini embedder |
+| `JINA_API_KEY` | — | Required for `sitemap` fetcher and `llms_txt` with `--use-jina`/`--try-md` |
 | `DOC_HUB_DATABASE_URL` | — | Full connection string (overrides PG* vars) |
 | `PGHOST` | `localhost` | PostgreSQL host |
 | `PGPORT` | `5432` | PostgreSQL port |
