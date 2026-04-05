@@ -97,9 +97,9 @@ async def test_sitemap_fetcher_raises_without_api_key(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_git_repo_fetcher_raises():
+async def test_git_repo_fetcher_missing_url_raises():
     fetcher = GitRepoFetcher()
-    with pytest.raises(NotImplementedError, match="git_repo"):
+    with pytest.raises(KeyError):
         await fetcher.fetch("test-corpus", {}, Path("/tmp"))
 
 

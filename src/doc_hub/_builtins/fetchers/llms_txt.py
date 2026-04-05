@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import re
 import socket
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import aiohttp
+
+from doc_hub._builtins.fetchers.jina import DownloadResult  # noqa: F401
+from doc_hub._builtins.fetchers import jina as _jina
 
 log = logging.getLogger(__name__)
 
@@ -22,19 +26,6 @@ DEFAULT_WORKERS = 20
 DEFAULT_RETRIES = 3
 TIMEOUT = 30  # seconds per HTTP request
 USER_AGENT = "doc-hub-fetcher/1.0"
-
-
-# ---------------------------------------------------------------------------
-# Manifest helpers
-# ---------------------------------------------------------------------------
-
-
-class DownloadResult(NamedTuple):
-    url: str
-    filename: str
-    success: bool
-    error: str | None = None
-    content_hash: str | None = None
 
 
 def url_to_filename(url: str, base_url: str) -> str:
@@ -262,6 +253,100 @@ def _parse_sections(llms_txt_content: str, url_pattern: str) -> list[dict[str, A
     return sections
 
 
+async def _fetch_bytes_if_exists(
+    session: aiohttp.ClientSession,
+    url: str,
+) -> bytes | None:
+    async with session.get(url) as resp:
+        if resp.status >= 400:
+            return None
+        return await resp.read()
+
+
+async def _resolve_one(
+    url: str,
+    filename: str,
+    output_dir: Path,
+    strategy: str,
+    direct_session: aiohttp.ClientSession,
+    jina_session: aiohttp.ClientSession | None,
+    retries: int,
+) -> DownloadResult:
+    if url.endswith(".md") or strategy == "direct":
+        return await _download_one(direct_session, url, filename, output_dir, retries)
+
+    if strategy == "jina":
+        return await _jina.fetch_one(jina_session, url, filename, output_dir, retries)
+
+    # strategy == "try_md"
+    if url.endswith(".md"):
+        return await _download_one(direct_session, url, filename, output_dir, retries)
+
+    md_url = url.rstrip("/") + ".md"
+    content = await _fetch_bytes_if_exists(direct_session, md_url)
+    if content is not None:
+        outpath = output_dir / filename
+        outpath.write_bytes(content)
+        content_hash = hashlib.sha256(content).hexdigest()
+        return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash)
+
+    log.debug("try_md: %s → falling back to Jina", url)
+    return await _jina.fetch_one(jina_session, url, filename, output_dir, retries)
+
+
+async def _resolve_all(
+    urls: list[str],
+    base_url: str,
+    output_dir: Path,
+    strategy: str,
+    workers: int,
+    retries: int,
+    jina_api_key: str | None,
+) -> list[DownloadResult]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timeout = aiohttp.ClientTimeout(total=TIMEOUT)
+    sem = asyncio.Semaphore(workers)
+
+    async with contextlib.AsyncExitStack() as stack:
+        direct_session = await stack.enter_async_context(
+            aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(limit=workers, family=socket.AF_INET),
+                timeout=timeout,
+                headers={"User-Agent": USER_AGENT},
+            )
+        )
+
+        jina_session: aiohttp.ClientSession | None = None
+        if strategy in ("jina", "try_md"):
+            jina_session = await stack.enter_async_context(
+                aiohttp.ClientSession(
+                    connector=aiohttp.TCPConnector(limit=workers, family=socket.AF_INET),
+                    timeout=timeout,
+                    headers=_jina.make_headers(jina_api_key),
+                )
+            )
+
+        async def bounded(url: str) -> DownloadResult:
+            filename = url_to_filename(url, base_url)
+            async with sem:
+                return await _resolve_one(
+                    url, filename, output_dir, strategy,
+                    direct_session, jina_session, retries,
+                )
+
+        tasks = [asyncio.create_task(bounded(url)) for url in urls]
+        results = await asyncio.gather(*tasks)
+
+    for r in results:
+        if r.success:
+            log.info("OK: %s", r.filename)
+        else:
+            log.warning("FAIL: %s — %s", r.url, r.error)
+
+    return list(results)
+
+
 # ---------------------------------------------------------------------------
 # LlmsTxtFetcher class
 # ---------------------------------------------------------------------------
@@ -306,11 +391,16 @@ class LlmsTxtFetcher:
         llms_txt_url: str = fetch_config["url"]
         base_url: str = fetch_config.get("base_url") or await _derive_base_url(llms_txt_url)
         url_suffix: str = fetch_config.get("url_suffix", "")
+        non_md_strategy: str = fetch_config.get("non_md_strategy", "direct")
         url_pattern: str = fetch_config.get("url_pattern") or _derive_url_pattern(
-            base_url, require_md_suffix=not url_suffix
+            base_url, require_md_suffix=not url_suffix and non_md_strategy == "direct"
         )
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
+
+        jina_api_key: str | None = None
+        if non_md_strategy in ("jina", "try_md"):
+            jina_api_key = _jina.get_api_key()
 
         timeout = aiohttp.ClientTimeout(total=TIMEOUT)
         connector = aiohttp.TCPConnector(family=socket.AF_INET)
@@ -365,7 +455,9 @@ class LlmsTxtFetcher:
         # 5. Re-download ALL upstream URLs to detect content changes.
         download_results: list[DownloadResult] = []
         if unique_urls:
-            download_results = await _download_all(unique_urls, base_url, output_dir, workers, retries)
+            download_results = await _resolve_all(
+                unique_urls, base_url, output_dir, non_md_strategy, workers, retries, jina_api_key
+            )
 
         # 6. Compare content hashes against manifest to classify changes
         new_count = 0
@@ -396,5 +488,11 @@ class LlmsTxtFetcher:
 
         # 7. Write updated manifest with content hashes
         write_manifest(download_results, output_dir, sections=sections)
+
+        if fetch_config.get("clean") and download_results:
+            from doc_hub.clean import DEFAULT_CLEAN_WORKERS, clean_corpus  # noqa: PLC0415
+            clean_workers = int(fetch_config.get("clean_workers", DEFAULT_CLEAN_WORKERS))
+            log.info("[%s] Running LLM cleaning on fetched pages", corpus_slug)
+            await clean_corpus(output_dir, workers=clean_workers)
 
         return output_dir

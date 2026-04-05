@@ -1,11 +1,8 @@
 """Built-in sitemap fetcher plugin for doc-hub."""
 from __future__ import annotations
 
-import asyncio
 import gzip
-import hashlib
 import logging
-import os
 import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,12 +11,13 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from doc_hub._builtins.fetchers.jina import DownloadResult
 from doc_hub._builtins.fetchers.llms_txt import (
-    DownloadResult,
     compute_manifest_diff,
     load_manifest,
     write_manifest,
 )
+from doc_hub._builtins.fetchers import jina as _jina
 
 log = logging.getLogger(__name__)
 
@@ -27,8 +25,6 @@ _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 DEFAULT_WORKERS = 5
 DEFAULT_RETRIES = 3
 TIMEOUT = 30
-RETRY_AFTER_DEFAULT = 2
-JINA_READER_PREFIX = "https://r.jina.ai/"
 
 
 # ---------------------------------------------------------------------------
@@ -98,88 +94,6 @@ def _derive_base_url(sitemap_url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Download helpers
-# ---------------------------------------------------------------------------
-
-
-async def _download_via_jina(
-    session: aiohttp.ClientSession,
-    url: str,
-    filename: str,
-    output_dir: Path,
-    retries: int = DEFAULT_RETRIES,
-) -> DownloadResult:
-    """Fetch a page's markdown via Jina Reader API with retry on 429."""
-    jina_url = f"{JINA_READER_PREFIX}{url}"
-    outpath = output_dir / filename
-    last_error: str | None = None
-
-    for attempt in range(1, retries + 1):
-        try:
-            async with session.get(jina_url) as resp:
-                if resp.status == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_AFTER_DEFAULT))
-                    last_error = f"429 rate limited (attempt {attempt})"
-                    log.debug("Rate limited on %s, waiting %ds", url, retry_after)
-                    await asyncio.sleep(retry_after)
-                    continue
-                resp.raise_for_status()
-                content = await resp.text()
-            content_bytes = content.encode()
-            outpath.write_bytes(content_bytes)
-            content_hash = hashlib.sha256(content_bytes).hexdigest()
-            return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash)
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            last_error = str(exc)
-            if attempt < retries:
-                log.debug("Retry %d/%d for %s: %s", attempt, retries, url, last_error)
-
-    return DownloadResult(url=url, filename=filename, success=False, error=last_error)
-
-
-async def _download_all_via_jina(
-    urls: list[str],
-    base_url: str,
-    output_dir: Path,
-    api_key: str,
-    workers: int = DEFAULT_WORKERS,
-    retries: int = DEFAULT_RETRIES,
-) -> list[DownloadResult]:
-    """Download all URLs via Jina Reader with bounded concurrency."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    timeout = aiohttp.ClientTimeout(total=TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=workers, family=socket.AF_INET)
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "text/markdown",
-    }
-
-    sem = asyncio.Semaphore(workers)
-
-    async def bounded(url: str, filename: str) -> DownloadResult:
-        async with sem:
-            return await _download_via_jina(session, url, filename, output_dir, retries)
-
-    async with aiohttp.ClientSession(
-        connector=connector, timeout=timeout, headers=headers,
-    ) as session:
-        tasks = [
-            asyncio.create_task(bounded(url, html_url_to_filename(url, base_url)))
-            for url in urls
-        ]
-        results = await asyncio.gather(*tasks)
-
-    for r in results:
-        if r.success:
-            log.info("OK: %s", r.filename)
-        else:
-            log.warning("FAIL: %s — %s", r.url, r.error)
-
-    return list(results)
-
-
-# ---------------------------------------------------------------------------
 # SitemapFetcher class
 # ---------------------------------------------------------------------------
 
@@ -210,12 +124,7 @@ class SitemapFetcher:
         fetch_config: dict[str, Any],
         output_dir: Path,
     ) -> Path:
-        api_key = os.environ.get("JINA_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "JINA_API_KEY environment variable is required for the sitemap fetcher. "
-                "Get your key at https://jina.ai/api-dashboard/key-manager"
-            )
+        api_key = _jina.get_api_key()
 
         sitemap_url: str = fetch_config["url"]
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
@@ -273,8 +182,13 @@ class SitemapFetcher:
         # 5. Download all pages via Jina Reader
         download_results: list[DownloadResult] = []
         if upstream_urls:
-            download_results = await _download_all_via_jina(
-                upstream_urls, base_url, output_dir, api_key, workers, retries,
+            download_results = await _jina.fetch_all(
+                upstream_urls,
+                output_dir,
+                api_key,
+                filename_fn=lambda u: html_url_to_filename(u, base_url),
+                workers=workers,
+                retries=retries,
             )
 
         # 5b. Write manifest before cleaning so clean_corpus can read it
