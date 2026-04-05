@@ -35,11 +35,11 @@ Use this file to track the current installed shape of a doc-hub deployment.
 - MCP mode observed on this machine: systemd-managed SSE service exists outside this repo and appears to point at an older external install path
 - Notes: this file should be updated after any fresh installation or deployment repair
 
-### 2026-03-26
+### 2026-04-05
 - Install root: /home/joenathan/.local/share/uv/tools/doc-hub
-- Invocation model: user-level global install via `uv tool install --force ...` with `doc-hub` on `~/.local/bin`
+- Invocation model: user-level global editable install via `uv tool install --force -e /home/joenathan/Desktop/Projects/code/utilities/agent/doc-hub` with `doc-hub` on `~/.local/bin`
 - Canonical CLI: `doc-hub`
 - Database target used for verification: local VectorChord PostgreSQL on `localhost:5433`
 - DB connection mode used for verification: durable machine-wide env file at `/home/joenathan/.local/share/doc-hub/env`
 - MCP mode observed on this machine: user systemd SSE service at `doc-hub-mcp.service` using `/home/joenathan/.local/bin/doc-hub serve mcp --transport sse --port 8340`
-- Notes: CLI bootstrap also falls back to `/home/joenathan/.local/share/doc-hub/env` when no repo-local `.env` is present; bundled manpage is reachable through `doc-hub man`; bare `man doc-hub` depends on the uv tool man directory being present on `MANPATH`
+- Notes: install is editable (code changes in repo are live immediately); re-run install command after pyproject.toml dependency changes to refresh metadata; `python-pam>=2.0` added as dependency (used by `doc-hub pipeline remove` for PAM auth gate)
