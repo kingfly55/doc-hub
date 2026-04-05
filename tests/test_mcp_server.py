@@ -19,7 +19,6 @@ import pytest
 from doc_hub.models import Corpus
 from doc_hub.mcp_server import (
     AppState,
-    LARGE_DOC_THRESHOLD,
     _add_corpus_impl,
     _browse_corpus_impl,
     _get_document_impl,
@@ -1099,8 +1098,8 @@ class TestGetDocumentImpl:
         }
 
     @pytest.mark.asyncio
-    async def test_returns_full_mode_for_small_doc(self):
-        """Small documents return full mode."""
+    async def test_returns_full_mode(self):
+        """Returns full mode with document content."""
         pool = _make_mock_pool()
         chunks = [self._make_chunk(content="Short doc")]
 
@@ -1108,93 +1107,11 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
         assert result["mode"] == "full"
         assert result["content"] == "Short doc"
-
-    @pytest.mark.asyncio
-    async def test_returns_outline_mode_for_large_doc(self):
-        """Large documents return outline mode by default."""
-        pool = _make_mock_pool()
-        chunks = [
-            self._make_chunk(heading="Intro", heading_level=1, section_path="Intro", content="# Intro"),
-            self._make_chunk(
-                heading="Deep Dive",
-                heading_level=2,
-                section_path="Intro > Deep Dive",
-                content="A" * (LARGE_DOC_THRESHOLD + 1),
-            ),
-        ]
-
-        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
-            result = await _get_document_impl(
-                corpus="pydantic-ai",
-                doc_path="guide/large",
-                section=None,
-                force=False,
-                pool=pool,
-            )
-
-        assert result["mode"] == "outline"
-        assert result["sections"] == [
-            {
-                "heading": "Intro",
-                "heading_level": 1,
-                "section_path": "Intro",
-                "char_count": len("# Intro"),
-            },
-            {
-                "heading": "Deep Dive",
-                "heading_level": 2,
-                "section_path": "Intro > Deep Dive",
-                "char_count": LARGE_DOC_THRESHOLD + 1,
-            },
-        ]
-
-    @pytest.mark.asyncio
-    async def test_force_overrides_outline(self):
-        """force=True returns full mode even for large docs."""
-        pool = _make_mock_pool()
-        chunks = [self._make_chunk(content="A" * (LARGE_DOC_THRESHOLD + 1))]
-
-        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
-            result = await _get_document_impl(
-                corpus="pydantic-ai",
-                doc_path="guide/large",
-                section=None,
-                force=True,
-                pool=pool,
-            )
-
-        assert result["mode"] == "full"
-
-    @pytest.mark.asyncio
-    async def test_section_filter_returns_full_and_is_forwarded(self):
-        """section queries return full mode and forward section to chunk lookup."""
-        pool = _make_mock_pool()
-        chunks = [self._make_chunk(section_path="Intro > API", content="A" * (LARGE_DOC_THRESHOLD + 1))]
-        get_document_chunks = AsyncMock(return_value=chunks)
-
-        with patch("doc_hub.documents.get_document_chunks", new=get_document_chunks):
-            result = await _get_document_impl(
-                corpus="pydantic-ai",
-                doc_path="guide/large",
-                section="Intro > API",
-                force=False,
-                pool=pool,
-            )
-
-        assert result["mode"] == "full"
-        get_document_chunks.assert_awaited_once_with(
-            pool,
-            "pydantic-ai",
-            "guide/large",
-            section="Intro > API",
-        )
 
     @pytest.mark.asyncio
     async def test_returns_error_for_missing_doc(self):
@@ -1205,8 +1122,6 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="missing/doc",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
@@ -1214,7 +1129,7 @@ class TestGetDocumentImpl:
 
     @pytest.mark.asyncio
     async def test_content_is_concatenated_chunks(self):
-        """Full mode concatenates chunk content with blank lines."""
+        """Concatenates chunk content with blank lines."""
         pool = _make_mock_pool()
         chunks = [
             self._make_chunk(content="First chunk"),
@@ -1225,8 +1140,6 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
@@ -1245,8 +1158,6 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
@@ -1262,8 +1173,6 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
@@ -1282,8 +1191,6 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
@@ -1302,41 +1209,11 @@ class TestGetDocumentImpl:
             result = await _get_document_impl(
                 corpus="pydantic-ai",
                 doc_path="guide/intro",
-                section=None,
-                force=False,
                 pool=pool,
             )
 
         assert result["total_chars"] == 80
         assert result["section_count"] == 2
-
-    @pytest.mark.asyncio
-    async def test_outline_includes_hint_and_sections(self):
-        """Outline mode includes a hint and section metadata."""
-        pool = _make_mock_pool()
-        chunks = [
-            self._make_chunk(heading="Intro", heading_level=1, section_path="Intro", content="# Intro"),
-            self._make_chunk(
-                heading="Usage",
-                heading_level=2,
-                section_path="Intro > Usage",
-                content="A" * LARGE_DOC_THRESHOLD,
-            ),
-        ]
-
-        with patch("doc_hub.documents.get_document_chunks", new=AsyncMock(return_value=chunks)):
-            result = await _get_document_impl(
-                corpus="pydantic-ai",
-                doc_path="guide/big",
-                section=None,
-                force=False,
-                pool=pool,
-            )
-
-        assert result["mode"] == "outline"
-        assert result["sections"][0]["heading"] == "Intro"
-        assert "section" in result["hint"].lower()
-        assert "force" in result["hint"].lower()
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ Exposes six tools to LLMs via the Model Context Protocol (MCP):
     - add_corpus_tool      — Register a new corpus (or update an existing one)
     - refresh_corpus_tool  — Re-run the full pipeline for a corpus
     - browse_corpus_tool   — Browse the document tree for a corpus
-    - get_document_tool    — Retrieve a document or section by path
+    - get_document_tool    — Retrieve a full document by its doc_path
 
 Transports:
 
@@ -467,14 +467,12 @@ async def get_document_tool(
     corpus: str,
     doc_path: str,
     ctx: Context,
-    section: str | None = None,
 ) -> dict:
-    """Get a document or section from a corpus."""
+    """Get a document from a corpus by its doc_path."""
     state: AppState = ctx.request_context.lifespan_context
     return await _get_document_impl(
         corpus=corpus,
         doc_path=doc_path,
-        section=section,
         pool=state.pool,
     )
 
@@ -483,13 +481,12 @@ async def _get_document_impl(
     *,
     corpus: str,
     doc_path: str,
-    section: str | None,
     pool: asyncpg.Pool,
 ) -> dict:
     """Core get-document logic."""
     from doc_hub.documents import get_document_chunks  # noqa: PLC0415
 
-    chunks = await get_document_chunks(pool, corpus, doc_path, section=section)
+    chunks = await get_document_chunks(pool, corpus, doc_path)
     if not chunks:
         return {"error": f"Document '{doc_path}' not found in corpus '{corpus}'"}
 
