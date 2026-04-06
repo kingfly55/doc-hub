@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import socket
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,9 @@ class GitRepoFetcher:
                        Derived automatically from the URL if it contains a tree path.
         branch (str):  Branch/tag/SHA to fetch (default: derived from URL or "main").
         extensions (list[str]): File extensions to include (default: [".md"]).
-        github_token (str): Personal access token for private repos / higher rate limits.
+        github_token (str): Personal access token for private repos or higher rate
+                            limits. Overrides the GITHUB_TOKEN / GH_TOKEN env vars
+                            for this specific corpus.
     """
 
     async def fetch(
@@ -98,7 +101,12 @@ class GitRepoFetcher:
         subdir = subdir.strip("/")
 
         extensions: list[str] = fetch_config.get("extensions", [".md"])
-        token: str | None = fetch_config.get("github_token")
+        # fetch_config token wins (per-repo override), then fall back to env vars
+        token: str | None = (
+            fetch_config.get("github_token")
+            or os.environ.get("GITHUB_TOKEN")
+            or os.environ.get("GH_TOKEN")
+        )
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
