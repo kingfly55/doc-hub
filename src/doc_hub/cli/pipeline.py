@@ -55,6 +55,14 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["branch"] = args.branch
         if args.docs_dir:
             config["docs_dir"] = args.docs_dir
+        if getattr(args, "extensions", None):
+            # Accept comma-separated string or list; normalise to list of ".ext" strings
+            raw = args.extensions
+            if isinstance(raw, str):
+                exts = [e.strip().lstrip(".") for e in raw.split(",") if e.strip()]
+                config["extensions"] = [f".{e}" for e in exts]
+            else:
+                config["extensions"] = list(raw)
 
     return config
 
@@ -122,6 +130,7 @@ def handle_add_interactive(args: argparse.Namespace) -> None:
     url_prefix = ""
     branch = "main"
     docs_dir = ""
+    extensions = ""
     path = ""
 
     if strategy == "llms_txt":
@@ -141,6 +150,7 @@ def handle_add_interactive(args: argparse.Namespace) -> None:
     elif strategy == "git_repo":
         branch = _prompt("Branch", "main")
         docs_dir = _prompt("Docs subdirectory (leave blank for root)", "")
+        extensions = _prompt("File extensions to fetch, comma-separated (default: .md)", ".md")
     elif strategy == "local_dir":
         path = _prompt("Local directory path")
 
@@ -173,6 +183,7 @@ def handle_add_interactive(args: argparse.Namespace) -> None:
         retries=None,
         branch=branch if strategy == "git_repo" else None,
         docs_dir=docs_dir if strategy == "git_repo" else None,
+        extensions=extensions if strategy == "git_repo" else None,
         use_jina=(non_md_strategy == "jina"),
         try_md=(non_md_strategy == "try_md"),
         clean=clean,
@@ -397,6 +408,7 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--clean", action="store_true", help="Run LLM cleaning pass after download (llms_txt, sitemap)")
     add_parser.add_argument("--branch", default=None, help="Git branch (git_repo)")
     add_parser.add_argument("--docs-dir", default=None, help="Docs subdirectory in repo (git_repo)")
+    add_parser.add_argument("--extensions", default=None, help="Comma-separated file extensions to fetch, e.g. .mdx or .md,.mdx (git_repo, default: .md)")
     add_parser.set_defaults(handler=handle_add)
 
     clean_parser = pipeline_subparsers.add_parser(
