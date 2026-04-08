@@ -164,9 +164,74 @@ VALUES (
 |-----|----------|-------------|
 | `url` | Yes | URL to the `llms.txt` manifest file |
 | `url_pattern` | No | Regex to extract doc URLs from the manifest. Auto-derived from `url` if omitted. |
+| `url_suffix` | No | Suffix appended to each extracted URL (e.g. `".md"` for sites that list bare URLs but serve pages with an extension). |
+| `url_excludes` | No | List of literal corpus-relative path strings to exclude. A trailing `/` also drops the bare page. e.g. `["api/reference/", "changelog"]`. See [URL exclusions](#url-exclusions) below. |
+| `url_exclude_pattern` | No | Raw regex matched against the corpus-relative path. OR'd with `url_excludes` if both are set. |
 | `base_url` | No | Base URL for filename generation. Auto-derived from `url` if omitted. |
 | `workers` | No | Download concurrency (default: 20) |
 | `retries` | No | Per-URL HTTP retry count (default: 3) |
+
+### `sitemap` strategy config fields
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `url` | Yes | URL to the `sitemap.xml` or `sitemap.xml.gz` file |
+| `url_prefix` | No | Only fetch URLs whose full URL starts with this prefix (subdirectory inclusion). |
+| `url_excludes` | No | List of literal corpus-relative path strings to exclude. See [URL exclusions](#url-exclusions) below. |
+| `url_exclude_pattern` | No | Raw regex matched against the corpus-relative path. OR'd with `url_excludes` if both are set. |
+| `base_url` | No | Base URL for filename generation. Defaults to the scheme+host of the sitemap URL. |
+| `workers` | No | Download concurrency (default: 5) |
+| `retries` | No | Per-URL retry count (default: 3) |
+| `clean` | No | Run LLM cleaning pass after download (default: false) |
+
+The `sitemap` strategy requires `JINA_API_KEY` — pages are fetched through Jina Reader.
+
+### URL exclusions
+
+Both `llms_txt` and `sitemap` fetchers accept the same two exclusion keys, which can be combined. Matching is anchored at the start of the URL's **path relative to `base_url`** (the same transform used for filename derivation). For a URL `https://docs.example.com/api/reference/users` under base `https://docs.example.com/`, the string matched is `api/reference/users`.
+
+**`url_excludes`** — list of literal strings. Each entry is regex-escaped, so metacharacters are matched literally. A trailing `/` on an entry is rewritten to `(?:/|$)` so the bare page is dropped too:
+
+```json
+{
+  "url": "https://docs.example.com/sitemap.xml",
+  "url_excludes": ["api/reference/", "changelog"]
+}
+```
+
+This excludes:
+- `/api/reference` (bare page) and `/api/reference/users` (descendants)
+- `/changelog` and `/changelog/v2`
+
+It does **not** exclude `/myapi/overview` or `/guide/api/intro` (anchoring prevents mid-path matches), nor `/api/reference-old` (the trailing-slash rewrite requires `/` or end-of-string).
+
+**`url_exclude_pattern`** — raw regex, used as-is. Use this when you need version-stripping, character classes, or anchored-end matching:
+
+```json
+{
+  "url": "https://docs.example.com/llms.txt",
+  "url_exclude_pattern": "v\\d+/legacy/"
+}
+```
+
+Excludes any path starting with `v1/legacy/`, `v2/legacy/`, etc.
+
+To exclude *only* an exact page (not its sub-pages), use an end anchor:
+
+```json
+{ "url_exclude_pattern": "changelog$" }
+```
+
+**Combined** — both keys can be set, and they are OR'd together:
+
+```json
+{
+  "url_excludes": ["api/reference/", "blog/"],
+  "url_exclude_pattern": "v\\d+/"
+}
+```
+
+> **Note**: Exclusion keys are currently only settable via the `fetch_config` JSONB column (direct SQL or MCP `add_corpus_tool`). They are not yet exposed as `doc-hub pipeline add` CLI flags.
 
 ---
 

@@ -14,6 +14,7 @@ from typing import Any
 import aiohttp
 
 from doc_hub._builtins.fetchers.jina import DownloadResult  # noqa: F401
+from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
 from doc_hub._builtins.fetchers import jina as _jina
 
 log = logging.getLogger(__name__)
@@ -367,6 +368,13 @@ class LlmsTxtFetcher:
             like docs.deno.com where the index lists bare URLs but each page is
             served with an ``.md`` extension.  When set, the auto-derived
             ``url_pattern`` no longer requires a ``.md`` suffix.
+        url_excludes (list[str]): Literal corpus-relative path strings to
+            exclude. Each is regex-escaped; a trailing ``/`` becomes
+            ``(?:/|$)`` so the bare page is also dropped.
+            e.g. ``["api/reference/", "changelog"]``.
+        url_exclude_pattern (str): Raw regex (used as-is) matched against the
+            corpus-relative path with ``re.match``. OR'd with ``url_excludes``
+            if both are set.
         base_url (str): Base URL for filename generation. Auto-derived if omitted.
         workers (int): Download concurrency (default 20).
         retries (int): Per-URL retry count (default 3).
@@ -397,6 +405,8 @@ class LlmsTxtFetcher:
         )
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
+        url_excludes: list[str] | None = fetch_config.get("url_excludes")
+        url_exclude_pattern: str | None = fetch_config.get("url_exclude_pattern")
 
         jina_api_key: str | None = None
         if non_md_strategy in ("jina", "try_md"):
@@ -437,6 +447,20 @@ class LlmsTxtFetcher:
                 seen.add(u)
                 unique_urls.append(u)
         log.info("[%s] Found %d unique URLs", corpus_slug, len(unique_urls))
+
+        # Apply exclusion filter (literal list and/or raw regex), matched
+        # against the corpus-relative path under base_url. Applied to both
+        # the flat URL list and section URL lists so the manifest stays
+        # consistent with what's actually on disk.
+        excluder = build_exclude_filter(base_url, url_excludes, url_exclude_pattern)
+        if excluder is not None:
+            before = len(unique_urls)
+            unique_urls = [u for u in unique_urls if not excluder(u)]
+            dropped = before - len(unique_urls)
+            if dropped:
+                log.info("[%s] Excluded %d URLs via url_excludes/url_exclude_pattern", corpus_slug, dropped)
+            for section in sections:
+                section["urls"] = [u for u in section["urls"] if not excluder(u)]
 
         # 3. Compute diff to identify removed files
         existing_manifest = load_manifest(output_dir)

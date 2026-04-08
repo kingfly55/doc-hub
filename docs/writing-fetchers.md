@@ -162,10 +162,12 @@ doc-hub ships four built-in fetchers registered via entry points:
 
 | Name | Class | Description |
 |------|-------|-------------|
-| `llms_txt` | `LlmsTxtFetcher` | Downloads pages listed in an `llms.txt` index file. Supports `url_suffix` (e.g. `".md"`) for sites that list bare URLs but serve pages with an extension. |
+| `llms_txt` | `LlmsTxtFetcher` | Downloads pages listed in an `llms.txt` index file. Supports `url_suffix` (e.g. `".md"`) for sites that list bare URLs but serve pages with an extension. Supports `url_excludes` / `url_exclude_pattern` for skipping paths. |
 | `direct_url` | `DirectUrlFetcher` | Downloads one or more URLs directly as markdown files. Useful for monolithic docs (e.g. `llms-full.txt`). Config keys: `url` (single) or `urls` (list), optional `filenames` map. |
 | `local_dir` | `LocalDirFetcher` | Copies/links a local directory of markdown files |
-| `sitemap` | `SitemapFetcher` | Crawls a sitemap XML and downloads pages as markdown |
+| `sitemap` | `SitemapFetcher` | Crawls a sitemap XML and downloads pages as markdown. Supports `url_prefix` for subdirectory inclusion and `url_excludes` / `url_exclude_pattern` for path exclusion. |
 | `git_repo` | `GitRepoFetcher` | Clones a git repository and extracts markdown files |
+
+> **Shared helper**: both `llms_txt` and `sitemap` use `doc_hub._builtins.fetchers.url_filter.build_exclude_filter()` to compile exclusion rules. If you're authoring a new web-based fetcher with similar needs, reuse that helper for consistent semantics (see `url_filter.py` for the full contract).
 
 The authoritative protocol documentation is in `doc_hub/protocols.py`. This guide is a quickstart — refer to the protocol docstrings for the full contract.

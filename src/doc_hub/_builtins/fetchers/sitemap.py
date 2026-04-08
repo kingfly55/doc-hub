@@ -17,6 +17,7 @@ from doc_hub._builtins.fetchers.llms_txt import (
     load_manifest,
     write_manifest,
 )
+from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
 from doc_hub._builtins.fetchers import jina as _jina
 
 log = logging.getLogger(__name__)
@@ -108,6 +109,13 @@ class SitemapFetcher:
 
     Optional fetch_config keys:
         url_prefix (str): Only fetch URLs whose full URL starts with this prefix.
+        url_excludes (list[str]):  Literal corpus-relative path strings to
+                          exclude. Each is regex-escaped; a trailing ``/``
+                          becomes ``(?:/|$)`` so the bare page is also
+                          dropped. e.g. ``["api/reference/", "changelog"]``.
+        url_exclude_pattern (str): Raw regex (used as-is) matched against
+                          the corpus-relative path with ``re.match``.
+                          OR'd with ``url_excludes`` if both are set.
         base_url (str):   Override the base URL used for filename derivation.
                           Defaults to the scheme+host of the sitemap URL.
         workers (int):    Download concurrency (default 5).
@@ -130,6 +138,8 @@ class SitemapFetcher:
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
         url_prefix: str | None = fetch_config.get("url_prefix")
+        url_excludes: list[str] | None = fetch_config.get("url_excludes")
+        url_exclude_pattern: str | None = fetch_config.get("url_exclude_pattern")
         # base_url drives filename generation: explicit config > url_prefix > sitemap host
         base_url: str = fetch_config.get("base_url") or url_prefix or _derive_base_url(sitemap_url)
 
@@ -162,6 +172,16 @@ class SitemapFetcher:
                 "[%s] Filtered to %d URLs matching prefix %r",
                 corpus_slug, len(upstream_urls), url_prefix,
             )
+
+        # Apply exclusion filter (literal list and/or raw regex), matched
+        # against the corpus-relative path under base_url.
+        excluder = build_exclude_filter(base_url, url_excludes, url_exclude_pattern)
+        if excluder is not None:
+            before = len(upstream_urls)
+            upstream_urls = [u for u in upstream_urls if not excluder(u)]
+            dropped = before - len(upstream_urls)
+            if dropped:
+                log.info("[%s] Excluded %d URLs via url_excludes/url_exclude_pattern", corpus_slug, dropped)
 
         # 3. Build sections from URL structure
         sections = build_sections_from_urls(upstream_urls, base_url)
