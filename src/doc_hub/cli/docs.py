@@ -11,12 +11,26 @@ from doc_hub.db import create_pool, ensure_schema, list_corpora
 from doc_hub.search import build_search_parser, handle_search_args
 
 
+def _handle_docs_error(exc: ValueError, *, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
+    else:
+        print(f"Error: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+
 def handle_browse(args: argparse.Namespace) -> None:
-    asyncio.run(browse(args))
+    try:
+        asyncio.run(browse(args))
+    except ValueError as exc:
+        _handle_docs_error(exc, as_json=args.json)
 
 
 def handle_read(args: argparse.Namespace) -> None:
-    asyncio.run(read(args))
+    try:
+        asyncio.run(read(args))
+    except ValueError as exc:
+        _handle_docs_error(exc, as_json=args.json)
 
 
 def handle_search(args: argparse.Namespace) -> None:

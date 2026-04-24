@@ -13,6 +13,7 @@ import logging
 
 from dotenv import load_dotenv
 
+from doc_hub.corpora import validate_corpus_available
 from doc_hub.db import create_pool, ensure_schema
 from doc_hub.documents import get_document_chunks_by_doc_id, get_document_tree
 
@@ -43,6 +44,7 @@ async def browse(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
+        await validate_corpus_available(pool, args.corpus)
         nodes = await get_document_tree(pool, args.corpus, path=args.path, max_depth=args.depth)
         if args.json:
             print(json.dumps(nodes, indent=2))
@@ -58,6 +60,7 @@ async def read(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
+        await validate_corpus_available(pool, args.corpus)
         doc_path, chunks = await get_document_chunks_by_doc_id(pool, args.corpus, args.doc_id)
         if doc_path is None or not chunks:
             print(f"Document '{args.doc_id}' not found in corpus '{args.corpus}'")

@@ -179,6 +179,27 @@ def test_read_main_uses_load_dotenv_and_asyncio_run():
     mock_asyncio_run.assert_called_once()
 
 
+def test_browse_async_missing_corpus_raises_clear_error():
+    from doc_hub import browse as browse_module
+
+    args = argparse.Namespace(corpus="gastown", path=None, depth=None, json=True)
+    pool = MagicMock()
+
+    with (
+        patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
+        patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "validate_corpus_available", new=AsyncMock(side_effect=ValueError("Corpus 'gastown' not found. Did you mean: Gas City [gascity-v1]?"))),
+    ):
+        pool.close = AsyncMock()
+        import asyncio
+        try:
+            asyncio.run(browse_module.browse(args))
+            assert False, "Expected ValueError"
+        except ValueError as exc:
+            assert "Corpus 'gastown' not found" in str(exc)
+            assert "Did you mean" in str(exc)
+
+
 def test_browse_async_json_output():
     from doc_hub import browse as browse_module
 
@@ -193,6 +214,7 @@ def test_browse_async_json_output():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
         patch.object(browse_module, "get_document_tree", new=AsyncMock(return_value=nodes)) as mock_get_tree,
         redirect_stdout(stdout),
     ):
@@ -214,6 +236,7 @@ def test_read_not_found_prints_message_and_returns_successfully():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
         patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=(None, []))),
         redirect_stdout(stdout),
     ):
@@ -238,6 +261,7 @@ def test_read_json_full_output():
     with (
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
+        patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
         patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=("guide/large", chunks))) as mock_get_chunks,
         redirect_stdout(stdout),
     ):
