@@ -473,6 +473,7 @@ dependencies = [
     { name = "mcp" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "pamela" },
     { name = "pgvector" },
     { name = "python-dotenv" },
 ]
@@ -492,6 +493,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.26" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "openai", specifier = ">=1.0" },
+    { name = "pamela", specifier = ">=1.0" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "python-dotenv", specifier = ">=1.0" },
 ]
@@ -1070,6 +1072,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
+]
+
+[[package]]
+name = "pamela"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/1c/9d82a11b766bd17a23533a75cd41989f343ffe9c0a1dc31a588546c9bed9/pamela-1.2.0.tar.gz", hash = "sha256:0ea6e2a99dded8c7783a4a06f2d31f5bdcad894d79101e8f09322e387a34aacf", size = 7824, upload-time = "2024-08-09T09:26:36.194Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/14/1c52a2a3ca612d77550fef0404a496f080bfd600cf4c7c6a2a8ab4be2dc6/pamela-1.2.0-py2.py3-none-any.whl", hash = "sha256:27e543f1059bab1d7bc35b322d97705b4653869d1a06fe867d8c2b5206ed9d28", size = 6864, upload-time = "2024-08-09T09:26:35.344Z" },
 ]
 
 [[package]]

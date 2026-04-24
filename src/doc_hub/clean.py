@@ -141,6 +141,8 @@ async def clean_markdown(
     config: CleanConfig,
     retries: int = DEFAULT_CLEAN_RETRIES,
     backoff_base: float = DEFAULT_CLEAN_BACKOFF_BASE,
+    *,
+    client: AsyncOpenAI | None = None,
 ) -> str:
     """Send markdown through an LLM to clean it, with retry and backoff.
 
@@ -153,6 +155,9 @@ async def clean_markdown(
         config:       LLM cleaning configuration.
         retries:      Max attempts (default 3).
         backoff_base: Base backoff in seconds; doubles each retry (default 2s).
+        client:       Shared AsyncOpenAI client. If omitted a temporary one is
+                      created (fine for one-off calls; pass a shared instance
+                      when cleaning many files to reuse the connection pool).
 
     Returns:
         Cleaned markdown string.
@@ -160,12 +165,12 @@ async def clean_markdown(
     Raises:
         The last exception if all retries are exhausted.
     """
-    client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+    _client = client if client is not None else AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
     last_exc: Exception | None = None
 
     for attempt in range(1, retries + 1):
         try:
-            response = await client.chat.completions.create(
+            response = await _client.chat.completions.create(
                 model=config.model,
                 messages=[
                     {"role": "system", "content": config.prompt},
@@ -248,11 +253,13 @@ async def clean_corpus(
         log.info("All files already clean — nothing to do")
         return []
 
-    log.info("Cleaning %d of %d files", len(to_clean), len(files))
+    total = len(to_clean)
+    log.info("Cleaning %d of %d files (%d workers)", total, len(files), workers)
 
     sem = asyncio.Semaphore(workers)
     abort = asyncio.Event()
-    state = {"consecutive": 0}
+    state = {"consecutive": 0, "completed": 0}
+    client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
 
     async def _clean_one(entry: dict) -> CleanResult:
         filename = entry["filename"]
@@ -270,17 +277,21 @@ async def clean_corpus(
                     return CleanResult(filename=filename, success=False, error="file not found")
 
                 raw_content = filepath.read_text(encoding="utf-8")
-                cleaned = await clean_markdown(raw_content, config, retries=retries)
+                log.info("→ submitting %s", filename)
+                cleaned = await clean_markdown(raw_content, config, retries=retries, client=client)
                 filepath.write_text(cleaned, encoding="utf-8")
+                # Checkpoint immediately so an interrupt doesn't lose this file's progress.
+                # entry is a reference into manifest_data["files"], so this mutates in place.
+                # All ops below are sync — no await — so asyncio won't context-switch mid-write.
+                entry["clean_hash"] = entry["content_hash"]
+                manifest_path.write_text(json.dumps(manifest_data, indent=2))
                 state["consecutive"] = 0
-                log.info("Cleaned: %s", filename)
-                return CleanResult(filename=filename, success=True)
-
             except Exception as exc:
                 state["consecutive"] += 1
+                state["completed"] += 1
                 log.warning(
-                    "Failed to clean %s (%d consecutive): %s",
-                    filename, state["consecutive"], exc,
+                    "[%d/%d] Failed to clean %s (%d consecutive): %s",
+                    state["completed"], total, filename, state["consecutive"], exc,
                 )
                 if state["consecutive"] >= max_consecutive_failures:
                     abort.set()
@@ -291,18 +302,19 @@ async def clean_corpus(
                     )
                 return CleanResult(filename=filename, success=False, error=str(exc))
 
-    tasks = [asyncio.create_task(_clean_one(entry)) for entry in to_clean]
-    results = await asyncio.gather(*tasks)
+        state["completed"] += 1
+        log.info("[%d/%d] Cleaned: %s", state["completed"], total, filename)
+        return CleanResult(filename=filename, success=True)
+
+    try:
+        tasks = [asyncio.create_task(_clean_one(entry)) for entry in to_clean]
+        results = await asyncio.gather(*tasks)
+    finally:
+        await client.close()
 
     ok = sum(1 for r in results if r.success)
     fail = sum(1 for r in results if not r.success and r.error != "aborted (circuit breaker)")
     aborted = sum(1 for r in results if r.error == "aborted (circuit breaker)")
-
-    # Update manifest with clean_hash for successfully cleaned files
-    cleaned_set = {r.filename for r in results if r.success}
-    for entry in files:
-        if entry["filename"] in cleaned_set:
-            entry["clean_hash"] = entry["content_hash"]
 
     manifest_path.write_text(json.dumps(manifest_data, indent=2))
 

@@ -27,6 +27,7 @@ class DownloadResult(NamedTuple):
     success: bool
     error: str | None = None
     content_hash: str | None = None
+    skipped: bool = False
 
 
 def get_api_key() -> str:
@@ -53,9 +54,16 @@ async def fetch_one(
     filename: str,
     output_dir: Path,
     retries: int = DEFAULT_RETRIES,
+    *,
+    skip_existing: bool = True,
 ) -> DownloadResult:
-    jina_url = f"{JINA_READER_PREFIX}{url}"
     outpath = output_dir / filename
+
+    if skip_existing and outpath.exists():
+        content_hash = hashlib.sha256(outpath.read_bytes()).hexdigest()
+        return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash, skipped=True)
+
+    jina_url = f"{JINA_READER_PREFIX}{url}"
     last_error: str | None = None
 
     for attempt in range(1, retries + 1):
@@ -89,6 +97,7 @@ async def fetch_all(
     filename_fn: Callable[[str], str],
     workers: int = DEFAULT_WORKERS,
     retries: int = DEFAULT_RETRIES,
+    skip_existing: bool = True,
 ) -> list[DownloadResult]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -97,10 +106,21 @@ async def fetch_all(
     headers = make_headers(api_key)
 
     sem = asyncio.Semaphore(workers)
+    total = len(urls)
+    completed = 0
 
     async def bounded(url: str, filename: str) -> DownloadResult:
+        nonlocal completed
         async with sem:
-            return await fetch_one(session, url, filename, output_dir, retries)
+            result = await fetch_one(session, url, filename, output_dir, retries, skip_existing=skip_existing)
+        completed += 1
+        if not result.success:
+            log.warning("[%d/%d] FAIL: %s — %s", completed, total, result.url, result.error)
+        elif result.skipped:
+            log.debug("[%d/%d] skip: %s", completed, total, result.filename)
+        else:
+            log.info("[%d/%d] OK: %s", completed, total, result.filename)
+        return result
 
     async with aiohttp.ClientSession(
         connector=connector,
@@ -113,10 +133,12 @@ async def fetch_all(
         ]
         results = await asyncio.gather(*tasks)
 
-    for r in results:
-        if r.success:
-            log.info("OK: %s", r.filename)
-        else:
-            log.warning("FAIL: %s — %s", r.url, r.error)
+    fetched = sum(1 for r in results if r.success and not r.skipped)
+    skipped = sum(1 for r in results if r.skipped)
+    failed  = sum(1 for r in results if not r.success)
+    if skipped:
+        log.info("Download complete: %d fetched, %d already on disk, %d failed", fetched, skipped, failed)
+    else:
+        log.info("Download complete: %d/%d succeeded, %d failed", fetched, total, failed)
 
     return list(results)

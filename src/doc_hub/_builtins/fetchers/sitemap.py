@@ -23,6 +23,7 @@ from doc_hub._builtins.fetchers import jina as _jina
 log = logging.getLogger(__name__)
 
 _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
 DEFAULT_WORKERS = 5
 DEFAULT_RETRIES = 3
 TIMEOUT = 30
@@ -46,16 +47,44 @@ def html_url_to_filename(url: str, base_url: str) -> str:
     return rel.replace("/", "__") + ".md"
 
 
-def parse_sitemap_xml(xml_content: str) -> list[str]:
-    """Extract unique <loc> URLs from a sitemap XML string, preserving order."""
+def parse_sitemap_xml(
+    xml_content: str,
+    preferred_hreflang: str | None = None,
+) -> list[str]:
+    """Extract unique <loc> URLs from a sitemap XML string, preserving order.
+
+    When ``preferred_hreflang`` is set (e.g. ``"en"``), each ``<url>`` block is
+    inspected for ``<xhtml:link rel="alternate" hreflang="{lang}">`` elements.
+    If a matching alternate is found, its ``href`` replaces the ``<loc>`` value.
+    This collapses multilingual sitemaps (where each page appears once per
+    language) down to a single canonical URL per page.
+    """
     root = ET.fromstring(xml_content)
     seen: set[str] = set()
     urls: list[str] = []
-    for loc in root.iter(f"{{{_SITEMAP_NS}}}loc"):
-        url = loc.text
-        if url and url not in seen:
-            seen.add(url)
-            urls.append(url)
+
+    if preferred_hreflang:
+        for url_elem in root.iter(f"{{{_SITEMAP_NS}}}url"):
+            loc_elem = url_elem.find(f"{{{_SITEMAP_NS}}}loc")
+            if loc_elem is None or not loc_elem.text:
+                continue
+            target = loc_elem.text.strip()
+            for link in url_elem.findall(f"{{{_XHTML_NS}}}link"):
+                if link.get("rel") == "alternate" and link.get("hreflang") == preferred_hreflang:
+                    href = (link.get("href") or "").strip()
+                    if href:
+                        target = href
+                    break
+            if target and target not in seen:
+                seen.add(target)
+                urls.append(target)
+    else:
+        for loc in root.iter(f"{{{_SITEMAP_NS}}}loc"):
+            url = (loc.text or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+
     return urls
 
 
@@ -116,6 +145,12 @@ class SitemapFetcher:
         url_exclude_pattern (str): Raw regex (used as-is) matched against
                           the corpus-relative path with ``re.match``.
                           OR'd with ``url_excludes`` if both are set.
+        preferred_hreflang (str): When a sitemap uses ``<xhtml:link>`` alternate
+                          language elements (e.g. multilingual sites that list
+                          every page once per language), setting this to a BCP-47
+                          tag like ``"en"`` collapses duplicates to the matching
+                          alternate URL.  Pages with no matching alternate keep
+                          their ``<loc>`` URL unchanged.
         base_url (str):   Override the base URL used for filename derivation.
                           Defaults to the scheme+host of the sitemap URL.
         workers (int):    Download concurrency (default 5).
@@ -140,6 +175,7 @@ class SitemapFetcher:
         url_prefix: str | None = fetch_config.get("url_prefix")
         url_excludes: list[str] | None = fetch_config.get("url_excludes")
         url_exclude_pattern: str | None = fetch_config.get("url_exclude_pattern")
+        preferred_hreflang: str | None = fetch_config.get("preferred_hreflang")
         # base_url drives filename generation: explicit config > url_prefix > sitemap host
         base_url: str = fetch_config.get("base_url") or url_prefix or _derive_base_url(sitemap_url)
 
@@ -162,8 +198,10 @@ class SitemapFetcher:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "_sitemap.xml").write_text(xml_content)
 
-        upstream_urls = parse_sitemap_xml(xml_content)
+        upstream_urls = parse_sitemap_xml(xml_content, preferred_hreflang=preferred_hreflang)
         log.info("[%s] Found %d unique URLs in sitemap", corpus_slug, len(upstream_urls))
+        if preferred_hreflang:
+            log.info("[%s] Resolved to preferred hreflang=%r", corpus_slug, preferred_hreflang)
 
         # Filter to url_prefix if specified
         if url_prefix:

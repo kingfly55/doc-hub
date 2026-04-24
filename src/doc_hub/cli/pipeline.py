@@ -41,12 +41,24 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["workers"] = args.workers
         if args.retries is not None:
             config["retries"] = args.retries
-        if args.url_suffix:
+        if getattr(args, "url_suffix", None):
             config["url_suffix"] = args.url_suffix
         if getattr(args, "use_jina", False):
             config["non_md_strategy"] = "jina"
         elif getattr(args, "try_md", False):
             config["non_md_strategy"] = "try_md"
+        if getattr(args, "clean", False):
+            config["clean"] = True
+
+    if strategy == "sitemap":
+        if getattr(args, "url_prefix", None):
+            config["url_prefix"] = args.url_prefix
+        if getattr(args, "preferred_hreflang", None):
+            config["preferred_hreflang"] = args.preferred_hreflang
+        if args.workers is not None:
+            config["workers"] = args.workers
+        if args.retries is not None:
+            config["retries"] = args.retries
         if getattr(args, "clean", False):
             config["clean"] = True
 
@@ -95,76 +107,122 @@ def _confirm(label: str, default: bool = False) -> bool:
     return (resp in ("y", "yes")) if resp else default
 
 
+def _derive_default_name(url_or_path: str, strategy: str | None) -> str:
+    """Derive a human-readable default corpus name from a URL or local path."""
+    if not url_or_path.startswith("http"):
+        from pathlib import Path as _Path
+        return _Path(url_or_path).name or url_or_path
+    from urllib.parse import urlparse as _urlparse
+    try:
+        parsed = _urlparse(url_or_path)
+        host = parsed.netloc.removeprefix("www.")
+        parts = [p for p in parsed.path.strip("/").split("/") if p]
+        _NOISE = {"sitemap.xml", "sitemap.xml.gz", "llms.txt", "llms-full.txt"}
+        if parts and parts[-1] in _NOISE:
+            parts = parts[:-1]
+        if strategy == "git_repo" and len(parts) >= 2:
+            return parts[1].replace("-", " ").replace("_", " ")
+        if parts:
+            return f"{host} {parts[0]}"
+        return host
+    except Exception:
+        return url_or_path.split("/")[-1] or url_or_path
+
+
 def handle_add_interactive(args: argparse.Namespace) -> None:
+    # ── URL / path ────────────────────────────────────────────────────────────
     url_or_path = _prompt("URL or path")
     strategy = _detect_strategy(url_or_path)
     if strategy is None:
         print("Could not detect strategy. Choose one:")
-        choices = ["llms_txt", "sitemap", "git_repo", "local_dir", "direct_url"]
-        for i, c in enumerate(choices, 1):
-            print(f"  {i}) {c}")
+        _STRATEGY_LABELS = [
+            ("sitemap",   "sitemap.xml — HTML site with sitemap"),
+            ("llms_txt",  "llms.txt   — LLMs.txt index file"),
+            ("git_repo",  "git_repo   — GitHub repository"),
+            ("local_dir", "local_dir  — local directory"),
+        ]
+        for i, (_, label) in enumerate(_STRATEGY_LABELS, 1):
+            print(f"  {i}) {label}")
         choice = _prompt("Choice", "1")
         try:
-            strategy = choices[int(choice) - 1]
+            strategy = _STRATEGY_LABELS[int(choice) - 1][0]
         except (ValueError, IndexError):
             strategy = choice
-        print(f"Strategy: {strategy}")
+        print(f"  Strategy: {strategy}")
     else:
-        print(f"\nDetected strategy: {strategy}")
+        print(f"  Strategy: {strategy}")
 
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url_or_path)
-        host = parsed.netloc or ""
-        path_part = parsed.path.strip("/").split("/")[0] if parsed.path.strip("/") else ""
-        default_name = f"{host} {path_part}".strip() if path_part else host
-    except Exception:
-        default_name = url_or_path.split("/")[-1] or url_or_path
-
-    name = _prompt("Corpus name", default_name)
+    # ── Name & slug ───────────────────────────────────────────────────────────
+    name = _prompt("Corpus name", _derive_default_name(url_or_path, strategy))
     slug = _prompt("Slug", slugify(name))
 
+    # ── Strategy-specific options ─────────────────────────────────────────────
     non_md_strategy = "direct"
     url_suffix = ""
     clean = False
     url_prefix = ""
+    preferred_hreflang = ""
     branch = "main"
     docs_dir = ""
     extensions = ""
     path = ""
 
     if strategy == "llms_txt":
-        print("URLs in this file may not be markdown.")
-        print("How should non-.md URLs be handled?")
-        print("  1) Direct download (default)")
-        print("  2) Try .md suffix, fall back to Jina on 404")
-        print("  3) Always use Jina")
+        print("\nHow should non-.md URLs be handled?")
+        print("  1) Direct download")
+        print("  2) Try .md suffix first, fall back to Jina on 404")
+        print("  3) Always use Jina Reader (converts HTML to markdown)")
         choice = _prompt("Choice", "1")
         non_md_strategy = {"1": "direct", "2": "try_md", "3": "jina"}.get(choice, "direct")
-        if non_md_strategy != "direct":
-            clean = _confirm("Run LLM cleaning after download?", default=False)
-        url_suffix = _prompt("URL suffix to append (e.g. .md, leave blank for none)", "")
-    elif strategy == "sitemap":
+        url_suffix = _prompt("URL suffix to append to each URL (e.g. .md, leave blank for none)", "")
         clean = _confirm("Run LLM cleaning after download?", default=False)
+
+    elif strategy == "sitemap":
+        if _confirm("Multilingual sitemap (contains xhtml:link alternate entries)?", default=False):
+            preferred_hreflang = _prompt("Preferred language tag", "en")
         url_prefix = _prompt("Filter to URL prefix (leave blank for all)", "")
+        clean = _confirm("Run LLM cleaning after download?", default=False)
+
     elif strategy == "git_repo":
         branch = _prompt("Branch", "main")
         docs_dir = _prompt("Docs subdirectory (leave blank for root)", "")
-        extensions = _prompt("File extensions to fetch, comma-separated (default: .md)", ".md")
+        extensions = _prompt("File extensions, comma-separated (default: .md)", ".md")
+
     elif strategy == "local_dir":
         path = _prompt("Local directory path")
 
     no_index = _confirm("Skip indexing for now?", default=False)
 
+    # ── Summary ───────────────────────────────────────────────────────────────
     print("\nSummary:")
-    print(f"  Name:     {name}")
-    print(f"  Slug:     {slug}")
-    print(f"  Strategy: {strategy}")
+    print(f"  Name:      {name}")
+    print(f"  Slug:      {slug}")
+    print(f"  Strategy:  {strategy}")
     if strategy in ("llms_txt", "sitemap", "git_repo"):
-        print(f"  URL:      {url_or_path}")
+        print(f"  URL:       {url_or_path}")
     if strategy == "local_dir":
-        print(f"  Path:     {path or url_or_path}")
-    if not _confirm("Proceed?", default=True):
+        print(f"  Path:      {path or url_or_path}")
+    if strategy == "sitemap":
+        if preferred_hreflang:
+            print(f"  Language:  {preferred_hreflang}")
+        if url_prefix:
+            print(f"  Prefix:    {url_prefix}")
+        print(f"  Cleaning:  {'yes' if clean else 'no'}")
+    elif strategy == "llms_txt":
+        _NMS_LABELS = {"direct": "direct", "try_md": "try .md → Jina", "jina": "always Jina"}
+        print(f"  Non-MD:    {_NMS_LABELS.get(non_md_strategy, non_md_strategy)}")
+        if url_suffix:
+            print(f"  Suffix:    {url_suffix}")
+        print(f"  Cleaning:  {'yes' if clean else 'no'}")
+    elif strategy == "git_repo":
+        print(f"  Branch:    {branch}")
+        if docs_dir:
+            print(f"  Docs dir:  {docs_dir}")
+        if extensions and extensions != ".md":
+            print(f"  Exts:      {extensions}")
+    print(f"  Index:     {'no (register only)' if no_index else 'yes'}")
+
+    if not _confirm("\nProceed?", default=True):
         print("Aborted.")
         return
 
@@ -188,6 +246,7 @@ def handle_add_interactive(args: argparse.Namespace) -> None:
         try_md=(non_md_strategy == "try_md"),
         clean=clean,
         url_prefix=url_prefix or None,
+        preferred_hreflang=preferred_hreflang or None,
     )
     handle_add(fake_args)
 
@@ -401,8 +460,10 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--url-pattern", default=None, help="Regex to filter doc URLs (llms_txt)")
     add_parser.add_argument("--url-suffix", default=None, help="Suffix appended to each extracted URL, e.g. '.md' (llms_txt)")
     add_parser.add_argument("--base-url", default=None, help="Base URL for filename generation (llms_txt)")
-    add_parser.add_argument("--workers", type=int, default=None, help="Download concurrency (llms_txt)")
-    add_parser.add_argument("--retries", type=int, default=None, help="Per-URL retry count (llms_txt)")
+    add_parser.add_argument("--url-prefix", default=None, help="Only fetch URLs starting with this prefix (sitemap)")
+    add_parser.add_argument("--preferred-hreflang", default=None, metavar="LANG", help="Prefer this hreflang alternate (e.g. 'en') to deduplicate multilingual sitemaps (sitemap)")
+    add_parser.add_argument("--workers", type=int, default=None, help="Download concurrency (llms_txt, sitemap)")
+    add_parser.add_argument("--retries", type=int, default=None, help="Per-URL retry count (llms_txt, sitemap)")
     add_parser.add_argument("--use-jina", action="store_true", help="Route non-.md URLs through Jina Reader (llms_txt)")
     add_parser.add_argument("--try-md", action="store_true", help="Try appending .md first, fall back to Jina on failure (llms_txt)")
     add_parser.add_argument("--clean", action="store_true", help="Run LLM cleaning pass after download (llms_txt, sitemap)")
