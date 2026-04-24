@@ -41,7 +41,7 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["workers"] = args.workers
         if args.retries is not None:
             config["retries"] = args.retries
-        if args.url_suffix:
+        if getattr(args, "url_suffix", None):
             config["url_suffix"] = args.url_suffix
         if getattr(args, "use_jina", False):
             config["non_md_strategy"] = "jina"
