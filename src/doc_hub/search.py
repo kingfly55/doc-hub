@@ -401,6 +401,10 @@ async def _search_docs_with_pool(
 
     pool = await create_pool()
     try:
+        if corpora:
+            from doc_hub.corpora import validate_corpora_available
+
+            await validate_corpora_available(pool, corpora)
         return await search_docs(
             query,
             pool=pool,
@@ -570,18 +574,28 @@ def handle_search_args(args: argparse.Namespace) -> None:
             language=args.language if args.language is not None else "english",
         )
 
-    results = search_docs_sync(
-        args.query,
-        corpora=args.corpora,
-        categories=args.categories,
-        exclude_categories=args.exclude_categories,
-        limit=args.limit,
-        offset=args.offset,
-        min_similarity=args.min_similarity,
-        source_url_prefix=args.source_url_prefix,
-        section_path_prefix=args.section_path_prefix,
-        config=config,
-    )
+    try:
+        results = search_docs_sync(
+            args.query,
+            corpora=args.corpora,
+            categories=args.categories,
+            exclude_categories=args.exclude_categories,
+            limit=args.limit,
+            offset=args.offset,
+            min_similarity=args.min_similarity,
+            source_url_prefix=args.source_url_prefix,
+            section_path_prefix=args.section_path_prefix,
+            config=config,
+        )
+    except ValueError as exc:
+        if args.json:
+            import json
+            import sys
+            print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
+        else:
+            import sys
+            print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if args.json:
         import json

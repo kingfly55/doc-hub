@@ -55,6 +55,7 @@ def _make_row(
         "start_line": 1,
         "end_line": 10,
         "source_file": source_file,
+        "doc_path": source_file.removesuffix(".md").replace("__", "/"),
     }
 
 
@@ -160,6 +161,7 @@ class TestSearchResult:
             start_line=1,
             end_line=5,
             source_file="api__hello.md",
+            doc_path="api/hello",
         )
         assert r.id == 42
         assert r.corpus_id == "test-corpus"
@@ -189,6 +191,7 @@ class TestSearchResult:
             start_line=1,
             end_line=1,
             source_file="test.md",
+            doc_path="test",
         )
         assert r.source_file == "test.md"
 
