@@ -129,7 +129,7 @@ def test_browse_main_uses_load_dotenv_and_asyncio_run():
     from doc_hub import browse as browse_module
 
     argv = ["demo-corpus"]
-    parsed_args = argparse.Namespace(corpus="demo-corpus", path=None, depth=None, json=False)
+    parsed_args = argparse.Namespace(corpus="demo-corpus", path=None, depth=None, version=None, json=False)
 
     with (
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
@@ -156,7 +156,7 @@ def test_read_main_uses_load_dotenv_and_asyncio_run():
     from doc_hub import browse as browse_module
 
     argv = ["demo-corpus", "abc123"]
-    parsed_args = argparse.Namespace(corpus="demo-corpus", doc_id="abc123", json=False)
+    parsed_args = argparse.Namespace(corpus="demo-corpus", doc_id="abc123", version=None, json=False)
 
     with (
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
@@ -182,7 +182,7 @@ def test_read_main_uses_load_dotenv_and_asyncio_run():
 def test_browse_async_missing_corpus_raises_clear_error():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="gastown", path=None, depth=None, json=True)
+    args = argparse.Namespace(corpus="gastown", path=None, depth=None, version=None, json=True)
     pool = MagicMock()
 
     with (
@@ -203,7 +203,7 @@ def test_browse_async_missing_corpus_raises_clear_error():
 def test_browse_async_json_output():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", path="guides", depth=1, json=True)
+    args = argparse.Namespace(corpus="demo", path="guides", depth=1, version=None, json=True)
     pool = MagicMock()
     nodes = [
         {"title": "Guides", "depth": 0, "is_group": True, "total_chars": 0, "section_count": 0},
@@ -215,6 +215,7 @@ def test_browse_async_json_output():
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
         patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
+        patch.object(browse_module, "get_default_snapshot_id", new=AsyncMock(return_value="legacy")),
         patch.object(browse_module, "get_document_tree", new=AsyncMock(return_value=nodes)) as mock_get_tree,
         redirect_stdout(stdout),
     ):
@@ -222,14 +223,14 @@ def test_browse_async_json_output():
         import asyncio
         asyncio.run(browse_module.browse(args))
 
-    mock_get_tree.assert_awaited_once_with(pool, "demo", path="guides", max_depth=1)
-    assert json.loads(stdout.getvalue()) == nodes
+    mock_get_tree.assert_awaited_once_with(pool, "demo", path="guides", max_depth=1, snapshot_id="legacy")
+    assert json.loads(stdout.getvalue()) == {"corpus": "demo", "snapshot_id": "legacy", "documents": nodes}
 
 
 def test_read_not_found_prints_message_and_returns_successfully():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", doc_id="missing1", json=False)
+    args = argparse.Namespace(corpus="demo", doc_id="missing1", version=None, json=False)
     pool = MagicMock()
 
     stdout = io.StringIO()
@@ -237,6 +238,7 @@ def test_read_not_found_prints_message_and_returns_successfully():
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
         patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
+        patch.object(browse_module, "get_default_snapshot_id", new=AsyncMock(return_value="legacy")),
         patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=(None, []))),
         redirect_stdout(stdout),
     ):
@@ -250,7 +252,7 @@ def test_read_not_found_prints_message_and_returns_successfully():
 def test_read_json_full_output():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", doc_id="abc123", json=True)
+    args = argparse.Namespace(corpus="demo", doc_id="abc123", version=None, json=True)
     pool = MagicMock()
     chunks = [
         {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 5, "source_url": "https://example.com/doc", "content": "First"},
@@ -262,6 +264,7 @@ def test_read_json_full_output():
         patch.object(browse_module, "create_pool", new=AsyncMock(return_value=pool)),
         patch.object(browse_module, "ensure_schema", new=AsyncMock()),
         patch.object(browse_module, "validate_corpus_available", new=AsyncMock()),
+        patch.object(browse_module, "get_default_snapshot_id", new=AsyncMock(return_value="legacy")),
         patch.object(browse_module, "get_document_chunks_by_doc_id", new=AsyncMock(return_value=("guide/large", chunks))) as mock_get_chunks,
         redirect_stdout(stdout),
     ):
@@ -273,7 +276,8 @@ def test_read_json_full_output():
     assert payload["mode"] == "full"
     assert payload["content"] == "First\n\nSecond"
     assert payload["doc_path"] == "guide/large"
-    mock_get_chunks.assert_awaited_once_with(pool, "demo", "abc123")
+    assert payload["snapshot_id"] == "legacy"
+    mock_get_chunks.assert_awaited_once_with(pool, "demo", "abc123", snapshot_id="legacy")
 
 
 def test_pyproject_entry_points():

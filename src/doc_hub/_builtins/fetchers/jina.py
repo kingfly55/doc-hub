@@ -11,6 +11,8 @@ from typing import Callable, NamedTuple
 
 import aiohttp
 
+from doc_hub.versions import utc_now_iso
+
 log = logging.getLogger(__name__)
 
 JINA_READER_PREFIX = "https://r.jina.ai/"
@@ -28,6 +30,9 @@ class DownloadResult(NamedTuple):
     error: str | None = None
     content_hash: str | None = None
     skipped: bool = False
+    fetched_at: str | None = None
+    source_version: str | None = None
+    resolved_version: str | None = None
 
 
 def get_api_key() -> str:
@@ -56,12 +61,25 @@ async def fetch_one(
     retries: int = DEFAULT_RETRIES,
     *,
     skip_existing: bool = True,
+    fetched_at: str | None = None,
+    source_version: str | None = None,
+    resolved_version: str | None = None,
 ) -> DownloadResult:
     outpath = output_dir / filename
+    fetched_at = fetched_at or utc_now_iso()
 
     if skip_existing and outpath.exists():
         content_hash = hashlib.sha256(outpath.read_bytes()).hexdigest()
-        return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash, skipped=True)
+        return DownloadResult(
+            url=url,
+            filename=filename,
+            success=True,
+            content_hash=content_hash,
+            skipped=True,
+            fetched_at=fetched_at,
+            source_version=source_version,
+            resolved_version=resolved_version,
+        )
 
     jina_url = f"{JINA_READER_PREFIX}{url}"
     last_error: str | None = None
@@ -80,13 +98,29 @@ async def fetch_one(
             content_bytes = content.encode()
             outpath.write_bytes(content_bytes)
             content_hash = hashlib.sha256(content_bytes).hexdigest()
-            return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash)
+            return DownloadResult(
+                url=url,
+                filename=filename,
+                success=True,
+                content_hash=content_hash,
+                fetched_at=fetched_at,
+                source_version=source_version,
+                resolved_version=resolved_version,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             last_error = str(exc)
             if attempt < retries:
                 log.debug("Retry %d/%d for %s: %s", attempt, retries, url, last_error)
 
-    return DownloadResult(url=url, filename=filename, success=False, error=last_error)
+    return DownloadResult(
+        url=url,
+        filename=filename,
+        success=False,
+        error=last_error,
+        fetched_at=fetched_at,
+        source_version=source_version,
+        resolved_version=resolved_version,
+    )
 
 
 async def fetch_all(
@@ -98,8 +132,12 @@ async def fetch_all(
     workers: int = DEFAULT_WORKERS,
     retries: int = DEFAULT_RETRIES,
     skip_existing: bool = True,
+    fetched_at: str | None = None,
+    source_version: str | None = None,
+    resolved_version: str | None = None,
 ) -> list[DownloadResult]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    fetched_at = fetched_at or utc_now_iso()
 
     timeout = aiohttp.ClientTimeout(total=TIMEOUT)
     connector = aiohttp.TCPConnector(limit=workers, family=socket.AF_INET)
@@ -112,7 +150,17 @@ async def fetch_all(
     async def bounded(url: str, filename: str) -> DownloadResult:
         nonlocal completed
         async with sem:
-            result = await fetch_one(session, url, filename, output_dir, retries, skip_existing=skip_existing)
+            result = await fetch_one(
+                session,
+                url,
+                filename,
+                output_dir,
+                retries,
+                skip_existing=skip_existing,
+                fetched_at=fetched_at,
+                source_version=source_version,
+                resolved_version=resolved_version,
+            )
         completed += 1
         if not result.success:
             log.warning("[%d/%d] FAIL: %s — %s", completed, total, result.url, result.error)

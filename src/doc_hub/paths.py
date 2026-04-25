@@ -81,61 +81,57 @@ def corpus_dir(corpus_or_slug: Corpus | str) -> Path:
     return data_root() / slug
 
 
-def raw_dir(corpus_or_slug: Corpus | str) -> Path:
-    """Raw downloaded files directory: {data_root}/{slug}/raw/.
+def _validate_snapshot_id(snapshot_id: str) -> str:
+    if not snapshot_id or "/" in snapshot_id or "\\" in snapshot_id or snapshot_id.startswith("."):
+        raise ValueError(
+            f"Invalid snapshot id: {snapshot_id!r}. Snapshot ids must be non-empty, "
+            "must not contain path separators, and must not start with '.'."
+        )
+    return snapshot_id
 
-    Args:
-        corpus_or_slug: A Corpus object or a plain slug string.
 
-    Returns:
-        Absolute path to ``{data_root}/{slug}/raw/``.
+def versions_dir(corpus_or_slug: Corpus | str) -> Path:
+    """Version snapshots directory: {data_root}/{slug}/versions/."""
+    return corpus_dir(corpus_or_slug) / "versions"
+
+
+def snapshot_dir(corpus_or_slug: Corpus | str, snapshot_id: str) -> Path:
+    """One immutable snapshot directory: {data_root}/{slug}/versions/{snapshot_id}/."""
+    return versions_dir(corpus_or_slug) / _validate_snapshot_id(snapshot_id)
+
+
+def raw_dir(corpus_or_slug: Corpus | str, snapshot_id: str | None = None) -> Path:
+    """Raw downloaded files directory.
+
+    Without ``snapshot_id``, returns the legacy corpus-level raw directory.
+    With ``snapshot_id``, returns the versioned snapshot raw directory.
     """
-    return corpus_dir(corpus_or_slug) / "raw"
+    if snapshot_id is None:
+        return corpus_dir(corpus_or_slug) / "raw"
+    return snapshot_dir(corpus_or_slug, snapshot_id) / "raw"
 
 
-def chunks_dir(corpus_or_slug: Corpus | str) -> Path:
-    """Parsed and embedded chunks directory: {data_root}/{slug}/chunks/.
+def chunks_dir(corpus_or_slug: Corpus | str, snapshot_id: str | None = None) -> Path:
+    """Parsed and embedded chunks directory.
 
-    Args:
-        corpus_or_slug: A Corpus object or a plain slug string.
-
-    Returns:
-        Absolute path to ``{data_root}/{slug}/chunks/``.
+    Without ``snapshot_id``, returns the legacy corpus-level chunks directory.
+    With ``snapshot_id``, returns the versioned snapshot chunks directory.
     """
-    return corpus_dir(corpus_or_slug) / "chunks"
+    if snapshot_id is None:
+        return corpus_dir(corpus_or_slug) / "chunks"
+    return snapshot_dir(corpus_or_slug, snapshot_id) / "chunks"
 
 
-def manifest_path(corpus_or_slug: Corpus | str) -> Path:
-    """Manifest file for incremental sync: {data_root}/{slug}/raw/manifest.json.
-
-    Args:
-        corpus_or_slug: A Corpus object or a plain slug string.
-
-    Returns:
-        Absolute path to ``{data_root}/{slug}/raw/manifest.json``.
-    """
-    return raw_dir(corpus_or_slug) / "manifest.json"
+def manifest_path(corpus_or_slug: Corpus | str, snapshot_id: str | None = None) -> Path:
+    """Manifest file path for legacy or versioned raw directories."""
+    return raw_dir(corpus_or_slug, snapshot_id=snapshot_id) / "manifest.json"
 
 
-def embedded_chunks_path(corpus_or_slug: Corpus | str) -> Path:
-    """Embedded chunks JSONL file: {data_root}/{slug}/chunks/embedded_chunks.jsonl.
-
-    Args:
-        corpus_or_slug: A Corpus object or a plain slug string.
-
-    Returns:
-        Absolute path to ``{data_root}/{slug}/chunks/embedded_chunks.jsonl``.
-    """
-    return chunks_dir(corpus_or_slug) / "embedded_chunks.jsonl"
+def embedded_chunks_path(corpus_or_slug: Corpus | str, snapshot_id: str | None = None) -> Path:
+    """Embedded chunks JSONL path for legacy or versioned chunks directories."""
+    return chunks_dir(corpus_or_slug, snapshot_id=snapshot_id) / "embedded_chunks.jsonl"
 
 
-def embeddings_cache_path(corpus_or_slug: Corpus | str) -> Path:
-    """Embedding cache JSONL file: {data_root}/{slug}/chunks/embeddings_cache.jsonl.
-
-    Args:
-        corpus_or_slug: A Corpus object or a plain slug string.
-
-    Returns:
-        Absolute path to ``{data_root}/{slug}/chunks/embeddings_cache.jsonl``.
-    """
-    return chunks_dir(corpus_or_slug) / "embeddings_cache.jsonl"
+def embeddings_cache_path(corpus_or_slug: Corpus | str, snapshot_id: str | None = None) -> Path:
+    """Embedding cache JSONL path for legacy or versioned chunks directories."""
+    return chunks_dir(corpus_or_slug, snapshot_id=snapshot_id) / "embeddings_cache.jsonl"

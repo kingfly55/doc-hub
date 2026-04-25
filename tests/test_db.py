@@ -9,9 +9,7 @@ Run integration tests with:
 
 from __future__ import annotations
 
-import json
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -49,7 +47,6 @@ def test_migrate_from_legacy_not_importable():
 
 def test_models_module_imports():
     """Verify that doc_hub.models exports Corpus (FetchStrategy removed in M5)."""
-    from doc_hub.models import Corpus
     import doc_hub.models
 
     assert hasattr(doc_hub.models, "Corpus")
@@ -309,12 +306,34 @@ def test_ddl_corpus_id_fk(monkeypatch):
 
 
 def test_ddl_unique_constraint(monkeypatch):
-    """Verify the chunks DDL has UNIQUE(corpus_id, content_hash)."""
+    """Verify the chunks DDL has UNIQUE(corpus_id, snapshot_id, content_hash)."""
     monkeypatch.delenv("DOC_HUB_VECTOR_DIM", raising=False)
 
     from doc_hub.db import _chunks_ddl
 
-    assert "UNIQUE (corpus_id, content_hash)" in _chunks_ddl()
+    assert "UNIQUE (corpus_id, snapshot_id, content_hash)" in _chunks_ddl()
+
+
+def test_chunks_ddl_has_version_columns(monkeypatch):
+    """Verify doc_chunks DDL includes version metadata columns."""
+    monkeypatch.delenv("DOC_HUB_VECTOR_DIM", raising=False)
+
+    from doc_hub.db import _chunks_ddl
+
+    ddl = _chunks_ddl()
+    assert "snapshot_id text NOT NULL" in ddl
+    assert "source_version text NOT NULL" in ddl
+    assert "fetched_at timestamptz" in ddl
+
+
+def test_version_tables_ddl_present():
+    """Verify doc_versions and doc_version_aliases DDL are present."""
+    from doc_hub.db import _VERSIONS_DDL, _VERSION_ALIASES_DDL
+
+    assert "CREATE TABLE IF NOT EXISTS doc_versions" in _VERSIONS_DDL
+    assert "PRIMARY KEY (corpus_id, snapshot_id)" in _VERSIONS_DDL
+    assert "CREATE TABLE IF NOT EXISTS doc_version_aliases" in _VERSION_ALIASES_DDL
+    assert "PRIMARY KEY (corpus_id, alias)" in _VERSION_ALIASES_DDL
 
 
 def test_ddl_heading_before_tsv(monkeypatch):
@@ -354,6 +373,58 @@ def test_ddl_on_delete_cascade(monkeypatch):
 
     assert "ON DELETE CASCADE" in _chunks_ddl()
     assert "ON DELETE CASCADE" in _META_DDL
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_chunks_unique_constraint_replaces_old_constraint():
+    from doc_hub.db import _migrate_legacy_chunks_unique_constraint
+
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(side_effect=["doc_chunks_corpus_id_content_hash_key", None])
+
+    await _migrate_legacy_chunks_unique_constraint(conn)
+
+    assert conn.execute.await_count == 2
+    assert "DROP CONSTRAINT" in conn.execute.await_args_list[0].args[0]
+    assert "UNIQUE (corpus_id, snapshot_id, content_hash)" in conn.execute.await_args_list[1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_chunks_unique_constraint_skips_when_current_exists():
+    from doc_hub.db import _migrate_legacy_chunks_unique_constraint
+
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(side_effect=[None, 1])
+
+    await _migrate_legacy_chunks_unique_constraint(conn)
+
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_documents_unique_constraint_replaces_old_constraint():
+    from doc_hub.db import _migrate_legacy_documents_unique_constraint
+
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(side_effect=["doc_documents_corpus_id_doc_path_key", None])
+
+    await _migrate_legacy_documents_unique_constraint(conn)
+
+    assert conn.execute.await_count == 2
+    assert "DROP CONSTRAINT" in conn.execute.await_args_list[0].args[0]
+    assert "UNIQUE (corpus_id, snapshot_id, doc_path)" in conn.execute.await_args_list[1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_migrate_legacy_documents_unique_constraint_skips_when_current_exists():
+    from doc_hub.db import _migrate_legacy_documents_unique_constraint
+
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(side_effect=[None, 1])
+
+    await _migrate_legacy_documents_unique_constraint(conn)
+
+    conn.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

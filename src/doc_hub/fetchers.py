@@ -9,12 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from doc_hub.discovery import get_registry
+
 # Pipeline defaults — generic enough to live here since pipeline.py imports them.
 # LlmsTxtFetcher also uses these values as fallback defaults internally.
 DEFAULT_WORKERS = 20
 DEFAULT_RETRIES = 3
-
-from doc_hub.discovery import get_registry
 
 
 async def fetch(

@@ -159,9 +159,15 @@ async def test_run_build_tree_calls_build_document_tree(tmp_path):
     assert loaded_chunks[0].source_file == "guide.md"
     assert mock_build_tree.call_args.kwargs["manifest_sections"] is None
     assert mock_ensure_schema.await_args_list == [call(pool)]
-    assert mock_upsert.await_args_list == [call(pool, corpus.slug, nodes)]
-    assert mock_link.await_args_list == [call(pool, corpus.slug, path_to_id)]
-    assert mock_delete.await_args_list == [call(pool, corpus.slug, ["guide"])]
+    assert mock_upsert.await_args_list == [call(
+        pool,
+        corpus.slug,
+        nodes,
+        snapshot_id="legacy",
+        source_version="latest",
+    )]
+    assert mock_link.await_args_list == [call(pool, corpus.slug, path_to_id, snapshot_id="legacy")]
+    assert mock_delete.await_args_list == [call(pool, corpus.slug, ["guide"], snapshot_id="legacy")]
 
 
 @pytest.mark.asyncio
@@ -178,7 +184,7 @@ async def test_run_pipeline_tree_stage():
         result = await run_pipeline(corpus, stage="tree")
 
     assert result is None
-    mock_tree.assert_awaited_once_with(corpus, pool=None)
+    mock_tree.assert_awaited_once_with(corpus, pool=None, snapshot_id=None)
     mock_fetch.assert_not_awaited()
     mock_parse.assert_not_awaited()
     mock_embed.assert_not_awaited()
@@ -253,14 +259,14 @@ async def test_run_pipeline_full_passes_same_pool_to_tree():
 
     assert result is index_result
     assert call_order == ["fetch", "parse", "embed", "index", "tree"]
-    mock_tree.assert_awaited_once_with(corpus, pool=shared_pool)
+    mock_tree.assert_awaited_once_with(corpus, pool=shared_pool, snapshot_id=None)
 
 
 @pytest.mark.asyncio
 async def test_run_pipeline_unknown_stage_lists_tree_in_error_message():
     corpus = _make_corpus()
 
-    with pytest.raises(ValueError, match=r"Unknown stage: 'frobnicate'.*fetch, parse, embed, index, tree"):
+    with pytest.raises(ValueError, match=r"Unknown stage: 'frobnicate'.*fetch, clean, parse, embed, index, tree"):
         await run_pipeline(corpus, stage="frobnicate")
 
 

@@ -6,7 +6,6 @@ required beyond tmpdir fixtures).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -236,6 +235,30 @@ def test_raw_dir_accepts_string(tmp_path, monkeypatch):
     assert paths.raw_dir("mylib").name == "raw"
 
 
+def test_versions_dir_structure(tmp_path, monkeypatch):
+    """versions_dir() returns {data_root}/{slug}/versions/."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert paths.versions_dir("mylib") == tmp_path.resolve() / "mylib" / "versions"
+
+
+def test_snapshot_dir_structure(tmp_path, monkeypatch):
+    """snapshot_dir() returns {data_root}/{slug}/versions/{snapshot_id}/."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.snapshot_dir("mylib", "sha256-abc")
+        == tmp_path.resolve() / "mylib" / "versions" / "sha256-abc"
+    )
+
+
+def test_raw_dir_with_snapshot_id_uses_versioned_layout(tmp_path, monkeypatch):
+    """raw_dir(..., snapshot_id=...) returns versioned raw directory."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.raw_dir("mylib", snapshot_id="sha256-abc")
+        == tmp_path.resolve() / "mylib" / "versions" / "sha256-abc" / "raw"
+    )
+
+
 # ---------------------------------------------------------------------------
 # chunks_dir() tests
 # ---------------------------------------------------------------------------
@@ -260,6 +283,15 @@ def test_chunks_dir_accepts_string(tmp_path, monkeypatch):
     """chunks_dir() accepts a plain string slug."""
     monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
     assert paths.chunks_dir("mylib").name == "chunks"
+
+
+def test_chunks_dir_with_snapshot_id_uses_versioned_layout(tmp_path, monkeypatch):
+    """chunks_dir(..., snapshot_id=...) returns versioned chunks directory."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.chunks_dir("mylib", snapshot_id="sha256-abc")
+        == tmp_path.resolve() / "mylib" / "versions" / "sha256-abc" / "chunks"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +320,20 @@ def test_manifest_path_accepts_string(tmp_path, monkeypatch):
     assert paths.manifest_path("mylib").name == "manifest.json"
 
 
+def test_manifest_path_with_snapshot_id_uses_versioned_layout(tmp_path, monkeypatch):
+    """manifest_path(..., snapshot_id=...) returns versioned manifest path."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.manifest_path("mylib", snapshot_id="sha256-abc")
+        == tmp_path.resolve()
+        / "mylib"
+        / "versions"
+        / "sha256-abc"
+        / "raw"
+        / "manifest.json"
+    )
+
+
 # ---------------------------------------------------------------------------
 # embedded_chunks_path() tests
 # ---------------------------------------------------------------------------
@@ -314,6 +360,20 @@ def test_embedded_chunks_path_accepts_string(tmp_path, monkeypatch):
     assert paths.embedded_chunks_path("mylib").name == "embedded_chunks.jsonl"
 
 
+def test_embedded_chunks_path_with_snapshot_id_uses_versioned_layout(tmp_path, monkeypatch):
+    """embedded_chunks_path(..., snapshot_id=...) returns versioned path."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.embedded_chunks_path("mylib", snapshot_id="sha256-abc")
+        == tmp_path.resolve()
+        / "mylib"
+        / "versions"
+        / "sha256-abc"
+        / "chunks"
+        / "embedded_chunks.jsonl"
+    )
+
+
 # ---------------------------------------------------------------------------
 # embeddings_cache_path() tests
 # ---------------------------------------------------------------------------
@@ -338,6 +398,20 @@ def test_embeddings_cache_path_accepts_string(tmp_path, monkeypatch):
     """embeddings_cache_path() accepts a plain string slug."""
     monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
     assert paths.embeddings_cache_path("mylib").name == "embeddings_cache.jsonl"
+
+
+def test_embeddings_cache_path_with_snapshot_id_uses_versioned_layout(tmp_path, monkeypatch):
+    """embeddings_cache_path(..., snapshot_id=...) returns versioned path."""
+    monkeypatch.setenv("DOC_HUB_DATA_DIR", str(tmp_path))
+    assert (
+        paths.embeddings_cache_path("mylib", snapshot_id="sha256-abc")
+        == tmp_path.resolve()
+        / "mylib"
+        / "versions"
+        / "sha256-abc"
+        / "chunks"
+        / "embeddings_cache.jsonl"
+    )
 
 
 # ---------------------------------------------------------------------------

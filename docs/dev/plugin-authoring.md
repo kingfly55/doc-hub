@@ -51,7 +51,7 @@ Source: `src/doc_hub/protocols.py` — `Fetcher.fetch`
 
 **Should:**
 - Create `output_dir` with `output_dir.mkdir(parents=True, exist_ok=True)` before writing files.
-- Write `manifest.json` to enable incremental sync (only changed URLs re-downloaded on next run). See `LlmsTxtFetcher` for the manifest pattern.
+- Write `manifest.json` to enable incremental sync and version provenance. New fetchers should prefer schema version 2 using helpers from `doc_hub.versions`.
 - Read all strategy-specific settings from `fetch_config`; fail fast with a clear error on missing required keys.
 
 **Must not:**
@@ -84,6 +84,9 @@ class LocalDirFetcher:
 ```
 
 ### Full example with manifest-based incremental sync
+
+For versioned corpora, prefer `doc_hub.versions.snapshot_manifest_from_downloads()` and `write_snapshot_manifest()` over ad-hoc manifest JSON. Schema-version-2 manifests carry `source_version`, immutable `snapshot_id`, `fetched_at`, content/url-set hashes, and aliases such as `latest`.
+
 
 Reference: `src/doc_hub/_builtins/fetchers/llms_txt.py` — `LlmsTxtFetcher`
 
@@ -163,7 +166,7 @@ Source: `src/doc_hub/protocols.py` — `Parser.parse`
 ### Contract
 
 **Must:**
-- Return a list of `Chunk` objects with **all 11 fields** set (see below).
+- Return a list of `Chunk` objects with **the core content fields** set (see below).
 - Set `category = ""` — the core pipeline calls `derive_category(source_file)` from `parse.py` to fill this in. Setting a non-empty value here will be overwritten only if the field is empty; do not set it.
 - Compute `content_hash = hashlib.sha256(content.encode()).hexdigest()` for each chunk.
 - Set `char_count = len(content)`.
@@ -183,7 +186,7 @@ Executed in `parse_docs()` (`src/doc_hub/parse.py`):
 4. **Deduplicates** by `content_hash`.
 5. Writes `chunks.jsonl`.
 
-### `Chunk` dataclass — all 11 fields
+### `Chunk` dataclass — the core content fields
 
 Source: `src/doc_hub/parse.py`
 
@@ -201,6 +204,9 @@ class Chunk:
     char_count: int     # len(content)
     content_hash: str   # hashlib.sha256(content.encode()).hexdigest()
     category: str       # MUST be "" — core pipeline derives this
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
+    fetched_at: str | None = None
 ```
 
 ### `derive_category()` rules

@@ -20,14 +20,27 @@ from __future__ import annotations
 import datetime
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import asyncpg
 
-from doc_hub.db import update_corpus_stats
+from doc_hub.db import update_corpus_stats, update_version_stats
 from doc_hub.embed import EmbeddedChunk
 from doc_hub.models import Corpus
 
 log = logging.getLogger(__name__)
+
+
+def _parse_timestamp(value: Any) -> datetime.datetime | None:
+    if value is None or isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time(), tzinfo=datetime.UTC)
+    if isinstance(value, str):
+        normalized = value.removesuffix("Z") + "+00:00" if value.endswith("Z") else value
+        return datetime.datetime.fromisoformat(normalized)
+    return value
+
 
 # Batch size controls how often progress is logged during the upsert loop.
 # The actual DB writes are all inside a single transaction.
@@ -103,6 +116,7 @@ async def upsert_chunks(
     updated = 0
     deleted = 0
     current_hashes: list[str] = []
+    snapshot_id = chunks[0].snapshot_id
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -111,7 +125,7 @@ async def upsert_chunks(
             # (e.g., overlapping MCP refresh + cron sync).
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtext($1))",
-                corpus.slug,
+                corpus.slug if snapshot_id == "legacy" else f"{corpus.slug}:{snapshot_id}",
             )
             log.debug("[%s] Advisory lock acquired", corpus.slug)
 
@@ -141,18 +155,22 @@ async def upsert_chunks(
                         """
                         INSERT INTO doc_chunks (
                             corpus_id, content_hash, content, heading, source_file,
-                            source_url, section_path, heading_level, start_line,
-                            end_line, char_count, category, embedding
+                            source_url, snapshot_id, source_version, fetched_at,
+                            section_path, heading_level, start_line, end_line,
+                            char_count, category, embedding
                         ) VALUES (
                             $1, $2, $3, $4, $5,
-                            $6, $7, $8, $9,
-                            $10, $11, $12, $13::vector
+                            $6, $7, $8, $9::timestamptz,
+                            $10, $11, $12, $13,
+                            $14, $15, $16::vector
                         )
-                        ON CONFLICT (corpus_id, content_hash) DO UPDATE SET
+                        ON CONFLICT (corpus_id, snapshot_id, content_hash) DO UPDATE SET
                             content       = EXCLUDED.content,
                             heading       = EXCLUDED.heading,
                             source_file   = EXCLUDED.source_file,
                             source_url    = EXCLUDED.source_url,
+                            source_version = EXCLUDED.source_version,
+                            fetched_at    = EXCLUDED.fetched_at,
                             section_path  = EXCLUDED.section_path,
                             heading_level = EXCLUDED.heading_level,
                             start_line    = EXCLUDED.start_line,
@@ -168,6 +186,9 @@ async def upsert_chunks(
                         chunk.heading,
                         chunk.source_file,
                         chunk.source_url,
+                        chunk.snapshot_id,
+                        chunk.source_version,
+                        _parse_timestamp(chunk.fetched_at),
                         chunk.section_path,
                         chunk.heading_level,
                         chunk.start_line,
@@ -199,9 +220,11 @@ async def upsert_chunks(
                     """
                     DELETE FROM doc_chunks
                     WHERE corpus_id = $1
-                      AND content_hash != ALL($2::text[])
+                      AND snapshot_id = $2
+                      AND content_hash != ALL($3::text[])
                     """,
                     corpus.slug,
+                    snapshot_id,
                     current_hashes,
                 )
                 # asyncpg execute() returns a status string like 'DELETE 5'
@@ -217,12 +240,15 @@ async def upsert_chunks(
     # Post-transaction: update corpus stats + metadata                     #
     # -------------------------------------------------------------------- #
     total = await pool.fetchval(
-        "SELECT count(*) FROM doc_chunks WHERE corpus_id = $1",
+        "SELECT count(*) FROM doc_chunks WHERE corpus_id = $1 AND snapshot_id = $2",
         corpus.slug,
+        snapshot_id,
     )
     total_int = int(total or 0)
 
     await update_corpus_stats(pool, corpus.slug, total_int)
+    if snapshot_id != "legacy":
+        await update_version_stats(pool, corpus.slug, snapshot_id, total_int)
     await _write_meta(pool, corpus.slug, total_int, embedder_model, embedder_dims)
 
     log.info(

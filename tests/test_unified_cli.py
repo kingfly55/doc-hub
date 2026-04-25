@@ -34,12 +34,14 @@ def test_docs_list_emits_human_readable_output(capsys):
 
     with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
         "doc_hub.cli.docs.ensure_schema", AsyncMock()
-    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)), patch(
+        "doc_hub.cli.docs.list_doc_versions", AsyncMock(return_value=[])
+    ):
         main(["docs", "list"])
 
     assert capsys.readouterr().out == (
-        "Pydantic AI [pydantic-ai] - enabled\n"
-        "Legacy Docs [legacy] - disabled\n"
+        "Pydantic AI [pydantic-ai] - enabled; no versions\n"
+        "Legacy Docs [legacy] - disabled; no versions\n"
     )
 
 
@@ -54,12 +56,14 @@ def test_docs_list_emits_json_output(capsys):
 
     with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
         "doc_hub.cli.docs.ensure_schema", AsyncMock()
-    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)), patch(
+        "doc_hub.cli.docs.list_doc_versions", AsyncMock(return_value=[])
+    ):
         main(["docs", "list", "--json"])
 
     assert json.loads(capsys.readouterr().out) == [
-        {"slug": "pydantic-ai", "display_name": "Pydantic AI", "enabled": True},
-        {"slug": "legacy", "display_name": "Legacy Docs", "enabled": False},
+        {"slug": "pydantic-ai", "display_name": "Pydantic AI", "enabled": True, "versions": [], "aliases": {}},
+        {"slug": "legacy", "display_name": "Legacy Docs", "enabled": False, "versions": [], "aliases": {}},
     ]
 
 
@@ -70,7 +74,7 @@ def test_man_prints_bundled_manpage_output(capsys):
 
     output = capsys.readouterr().out
     assert "doc-hub docs list" in output
-    assert "List registered corpora." in output
+    assert "List registered corpora with compact version and alias availability." in output
 
 
 def test_docs_search_routes_to_search_handler():
@@ -78,6 +82,15 @@ def test_docs_search_routes_to_search_handler():
 
     with patch("doc_hub.cli.docs.handle_search") as mock_handler:
         main(["docs", "search", "--corpus", "pydantic-ai", "retry logic"])
+
+    mock_handler.assert_called_once()
+
+
+def test_docs_versions_routes_to_versions_handler():
+    from doc_hub.cli.main import main
+
+    with patch("doc_hub.cli.docs.handle_versions") as mock_handler:
+        main(["docs", "versions", "pydantic-ai"])
 
     mock_handler.assert_called_once()
 

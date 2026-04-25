@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from doc_hub.browse import browse, build_browse_parser, build_read_parser, read
-from doc_hub.db import create_pool, ensure_schema, list_corpora
+from doc_hub.db import create_pool, ensure_schema, list_corpora, list_doc_versions
 from doc_hub.search import build_search_parser, handle_search_args
 
 
@@ -37,11 +37,41 @@ def handle_search(args: argparse.Namespace) -> None:
     handle_search_args(args)
 
 
+def _row_value(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return None
+
+
+def _format_version_rows(rows) -> tuple[list[dict], dict[str, str]]:
+    versions: list[dict] = []
+    aliases: dict[str, str] = {}
+    for row in rows:
+        entry = {
+            "source_version": str(row["source_version"]),
+            "snapshot_id": str(row["snapshot_id"]),
+            "fetched_at": str(row["fetched_at"]),
+            "total_chunks": int(row["total_chunks"] or 0),
+        }
+        row_aliases = _row_value(row, "aliases")
+        if row_aliases:
+            entry["aliases"] = [str(alias) for alias in row_aliases]
+            for alias in row_aliases:
+                aliases[str(alias)] = str(row["source_version"])
+        versions.append(entry)
+    return versions, aliases
+
+
 async def list_docs(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
         corpora = await list_corpora(pool, enabled_only=False)
+        versions_by_slug = {
+            corpus.slug: _format_version_rows(await list_doc_versions(pool, corpus.slug, enabled_only=False))
+            for corpus in corpora
+        }
         if args.json:
             print(
                 json.dumps(
@@ -50,6 +80,8 @@ async def list_docs(args: argparse.Namespace) -> None:
                             "slug": corpus.slug,
                             "display_name": corpus.name,
                             "enabled": corpus.enabled,
+                            "versions": versions_by_slug[corpus.slug][0],
+                            "aliases": versions_by_slug[corpus.slug][1],
                         }
                         for corpus in corpora
                     ],
@@ -64,13 +96,47 @@ async def list_docs(args: argparse.Namespace) -> None:
 
         for corpus in corpora:
             status = "enabled" if corpus.enabled else "disabled"
-            print(f"{corpus.name} [{corpus.slug}] - {status}")
+            versions, aliases = versions_by_slug[corpus.slug]
+            version_label = f"{len(versions)} versions" if versions else "no versions"
+            alias_label = ""
+            if aliases:
+                alias_label = " aliases: " + ", ".join(f"{alias}->{target}" for alias, target in sorted(aliases.items()))
+            print(f"{corpus.name} [{corpus.slug}] - {status}; {version_label}{alias_label}")
     finally:
         await pool.close()
 
 
 def handle_list(args: argparse.Namespace) -> None:
     asyncio.run(list_docs(args))
+
+
+async def list_versions(args: argparse.Namespace) -> None:
+    pool = await create_pool()
+    try:
+        await ensure_schema(pool)
+        rows = await list_doc_versions(pool, args.corpus, enabled_only=False)
+        versions, aliases = _format_version_rows(rows)
+        if args.json:
+            print(json.dumps({"corpus": args.corpus, "versions": versions, "aliases": aliases}, indent=2))
+            return
+        if not versions:
+            print(f"No versions found for corpus '{args.corpus}'")
+            return
+        print(f"Versions for {args.corpus}:")
+        for version in versions:
+            alias_suffix = ""
+            if version.get("aliases"):
+                alias_suffix = " aliases: " + ", ".join(version["aliases"])
+            print(
+                f"- {version['source_version']} -> {version['snapshot_id']} "
+                f"({version['total_chunks']} chunks){alias_suffix}"
+            )
+    finally:
+        await pool.close()
+
+
+def handle_versions(args: argparse.Namespace) -> None:
+    asyncio.run(list_versions(args))
 
 
 def _load_manpage_text() -> str:
@@ -159,6 +225,11 @@ def register_docs_group(subparsers: argparse._SubParsersAction) -> None:
     list_parser = docs_subparsers.add_parser("list", help="List registered corpora")
     list_parser.add_argument("--json", action="store_true", help="Emit JSON output")
     list_parser.set_defaults(handler=handle_list)
+
+    versions_parser = docs_subparsers.add_parser("versions", help="List versions for a corpus")
+    versions_parser.add_argument("corpus", help="Corpus slug")
+    versions_parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    versions_parser.set_defaults(handler=handle_versions)
 
     search_parser = docs_subparsers.add_parser("search", help="Search documentation")
     build_search_parser(search_parser)

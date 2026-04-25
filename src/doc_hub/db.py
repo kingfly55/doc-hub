@@ -43,8 +43,40 @@ CREATE TABLE IF NOT EXISTS doc_corpora (
 #   - heading and content columns are listed BEFORE the tsv generated column
 #     so that Postgres can compute the generated expression on CREATE TABLE.
 #   - tsv uses weighted tsvector: heading→weight A, content→weight B.
-#   - The unique constraint is (corpus_id, content_hash) — not just content_hash.
+#   - The unique constraint is (corpus_id, snapshot_id, content_hash).
 # NOTE: _CHUNKS_DDL constant is replaced by _chunks_ddl() function below.
+
+_VERSIONS_DDL = """
+CREATE TABLE IF NOT EXISTS doc_versions (
+    corpus_id         text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    snapshot_id       text NOT NULL,
+    source_version    text NOT NULL,
+    resolved_version  text,
+    source_type       text NOT NULL,
+    source_url        text NOT NULL,
+    fetch_strategy    text NOT NULL,
+    fetch_config_hash text NOT NULL,
+    url_set_hash      text,
+    content_hash      text NOT NULL,
+    fetched_at        timestamptz NOT NULL,
+    indexed_at        timestamptz,
+    total_chunks      int DEFAULT 0,
+    enabled           boolean DEFAULT true,
+    metadata          jsonb NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (corpus_id, snapshot_id)
+)
+"""
+
+_VERSION_ALIASES_DDL = """
+CREATE TABLE IF NOT EXISTS doc_version_aliases (
+    corpus_id   text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    alias       text NOT NULL,
+    snapshot_id text NOT NULL,
+    updated_at  timestamptz DEFAULT now(),
+    PRIMARY KEY (corpus_id, alias),
+    FOREIGN KEY (corpus_id, snapshot_id) REFERENCES doc_versions(corpus_id, snapshot_id) ON DELETE CASCADE
+)
+"""
 
 # doc_index_meta: per-corpus key/value metadata (timestamps, counts, etc.)
 _META_DDL = """
@@ -61,6 +93,8 @@ _DOCUMENTS_DDL = """
 CREATE TABLE IF NOT EXISTS doc_documents (
     id serial PRIMARY KEY,
     corpus_id text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    snapshot_id text NOT NULL DEFAULT 'legacy',
+    source_version text NOT NULL DEFAULT 'latest',
     doc_path text NOT NULL,
     title text NOT NULL,
     source_url text NOT NULL DEFAULT '',
@@ -71,7 +105,7 @@ CREATE TABLE IF NOT EXISTS doc_documents (
     is_group boolean NOT NULL DEFAULT false,
     total_chars int NOT NULL DEFAULT 0,
     section_count int NOT NULL DEFAULT 0,
-    UNIQUE (corpus_id, doc_path)
+    UNIQUE (corpus_id, snapshot_id, doc_path)
 )
 """
 
@@ -83,10 +117,10 @@ CREATE INDEX IF NOT EXISTS doc_documents_parent_id_idx
     ON doc_documents (parent_id);
 
 CREATE INDEX IF NOT EXISTS doc_documents_corpus_sort_order_idx
-    ON doc_documents (corpus_id, sort_order);
+    ON doc_documents (corpus_id, snapshot_id, sort_order);
 
 CREATE INDEX IF NOT EXISTS doc_documents_corpus_path_idx
-    ON doc_documents (corpus_id, doc_path text_pattern_ops);
+    ON doc_documents (corpus_id, snapshot_id, doc_path text_pattern_ops);
 """
 
 _CHUNKS_DOCUMENT_ID_DDL = """
@@ -105,6 +139,17 @@ _LEGACY_CORPORA_EMBEDDER_DDL = """
 ALTER TABLE doc_corpora ADD COLUMN IF NOT EXISTS embedder text NOT NULL DEFAULT 'gemini'
 """
 
+_LEGACY_CHUNKS_VERSION_COLUMNS_DDL = """
+ALTER TABLE doc_chunks ADD COLUMN IF NOT EXISTS snapshot_id text NOT NULL DEFAULT 'legacy';
+ALTER TABLE doc_chunks ADD COLUMN IF NOT EXISTS source_version text NOT NULL DEFAULT 'latest';
+ALTER TABLE doc_chunks ADD COLUMN IF NOT EXISTS fetched_at timestamptz
+"""
+
+_LEGACY_DOCUMENTS_VERSION_COLUMNS_DDL = """
+ALTER TABLE doc_documents ADD COLUMN IF NOT EXISTS snapshot_id text NOT NULL DEFAULT 'legacy';
+ALTER TABLE doc_documents ADD COLUMN IF NOT EXISTS source_version text NOT NULL DEFAULT 'latest'
+"""
+
 # Indexes — all idempotent via IF NOT EXISTS.
 # Notes:
 # - GIN indexes do NOT support composite (corpus_id, tsv) keys. Use a GIN on
@@ -121,7 +166,10 @@ CREATE INDEX IF NOT EXISTS doc_chunks_corpus_category_idx
     ON doc_chunks (corpus_id, category);
 
 CREATE INDEX IF NOT EXISTS doc_chunks_corpus_hash_idx
-    ON doc_chunks (corpus_id, content_hash);
+    ON doc_chunks (corpus_id, snapshot_id, content_hash);
+
+CREATE INDEX IF NOT EXISTS doc_chunks_corpus_snapshot_idx
+    ON doc_chunks (corpus_id, snapshot_id);
 
 CREATE INDEX IF NOT EXISTS doc_chunks_source_url_idx
     ON doc_chunks (source_url text_pattern_ops);
@@ -174,13 +222,16 @@ CREATE TABLE IF NOT EXISTS doc_chunks (
     embedding    vector({dim}) NOT NULL,
     source_file  text NOT NULL,
     source_url   text NOT NULL,
+    snapshot_id text NOT NULL DEFAULT 'legacy',
+    source_version text NOT NULL DEFAULT 'latest',
+    fetched_at timestamptz,
     section_path text NOT NULL,
     heading_level smallint NOT NULL,
     start_line   int NOT NULL DEFAULT 0,
     end_line     int NOT NULL DEFAULT 0,
     char_count   int NOT NULL,
     category     text NOT NULL,
-    UNIQUE (corpus_id, content_hash)
+    UNIQUE (corpus_id, snapshot_id, content_hash)
 )
 """
 
@@ -266,6 +317,93 @@ async def create_pool(dsn: str | None = None) -> asyncpg.Pool:
     return pool
 
 
+async def _execute_statements(conn: asyncpg.Connection, statements: str) -> None:
+    for stmt in statements.strip().split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            await conn.execute(stmt)
+
+
+async def _migrate_legacy_chunks_unique_constraint(conn: asyncpg.Connection) -> None:
+    constraint_name = await conn.fetchval(
+        """
+        SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'doc_chunks'
+          AND n.nspname = current_schema()
+          AND c.contype = 'u'
+          AND pg_get_constraintdef(c.oid) = 'UNIQUE (corpus_id, content_hash)'
+        LIMIT 1
+        """
+    )
+    if constraint_name:
+        await conn.execute(f'ALTER TABLE doc_chunks DROP CONSTRAINT "{constraint_name}"')
+
+    has_version_constraint = await conn.fetchval(
+        """
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'doc_chunks'
+          AND n.nspname = current_schema()
+          AND c.contype = 'u'
+          AND pg_get_constraintdef(c.oid) = 'UNIQUE (corpus_id, snapshot_id, content_hash)'
+        LIMIT 1
+        """
+    )
+    if not has_version_constraint:
+        await conn.execute(
+            """
+            ALTER TABLE doc_chunks
+            ADD CONSTRAINT doc_chunks_corpus_snapshot_content_hash_key
+            UNIQUE (corpus_id, snapshot_id, content_hash)
+            """
+        )
+
+
+async def _migrate_legacy_documents_unique_constraint(conn: asyncpg.Connection) -> None:
+    constraint_name = await conn.fetchval(
+        """
+        SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'doc_documents'
+          AND n.nspname = current_schema()
+          AND c.contype = 'u'
+          AND pg_get_constraintdef(c.oid) = 'UNIQUE (corpus_id, doc_path)'
+        LIMIT 1
+        """
+    )
+    if constraint_name:
+        await conn.execute(f'ALTER TABLE doc_documents DROP CONSTRAINT "{constraint_name}"')
+
+    has_version_constraint = await conn.fetchval(
+        """
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE t.relname = 'doc_documents'
+          AND n.nspname = current_schema()
+          AND c.contype = 'u'
+          AND pg_get_constraintdef(c.oid) = 'UNIQUE (corpus_id, snapshot_id, doc_path)'
+        LIMIT 1
+        """
+    )
+    if not has_version_constraint:
+        await conn.execute(
+            """
+            ALTER TABLE doc_documents
+            ADD CONSTRAINT doc_documents_corpus_snapshot_doc_path_key
+            UNIQUE (corpus_id, snapshot_id, doc_path)
+            """
+        )
+
+
 async def _migrate_legacy_corpora_schema(conn: asyncpg.Connection) -> None:
     parser_exists = await conn.fetchval(
         """
@@ -330,8 +468,18 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await _migrate_legacy_corpora_schema(conn)
         log.debug("legacy doc_corpora schema migrated if needed.")
 
+        await conn.execute(_VERSIONS_DDL)
+        log.debug("doc_versions table ensured.")
+
+        await conn.execute(_VERSION_ALIASES_DDL)
+        log.debug("doc_version_aliases table ensured.")
+
         await conn.execute(_chunks_ddl())
         log.debug("doc_chunks table ensured.")
+        await _execute_statements(conn, _LEGACY_CHUNKS_VERSION_COLUMNS_DDL)
+        log.debug("legacy doc_chunks version columns migrated if needed.")
+        await _migrate_legacy_chunks_unique_constraint(conn)
+        log.debug("legacy doc_chunks unique constraint migrated if needed.")
 
         # Validate existing vector dimension matches configured dimension.
         # CREATE TABLE IF NOT EXISTS preserves the old schema, so if
@@ -363,6 +511,10 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         await conn.execute(_DOCUMENTS_DDL)
         log.debug("doc_documents table ensured.")
+        await _execute_statements(conn, _LEGACY_DOCUMENTS_VERSION_COLUMNS_DDL)
+        log.debug("legacy doc_documents version columns migrated if needed.")
+        await _migrate_legacy_documents_unique_constraint(conn)
+        log.debug("legacy doc_documents unique constraint migrated if needed.")
 
         await conn.execute(_CHUNKS_DOCUMENT_ID_DDL)
         log.debug("doc_chunks.document_id column ensured.")
@@ -499,6 +651,162 @@ async def delete_corpus(pool: asyncpg.Pool, slug: str) -> bool:
     """
     result = await pool.execute("DELETE FROM doc_corpora WHERE slug = $1", slug)
     return result == "DELETE 1"
+
+
+async def upsert_doc_version(pool: asyncpg.Pool, version) -> None:
+    await pool.execute(
+        """
+        INSERT INTO doc_versions (
+            corpus_id, snapshot_id, source_version, resolved_version, source_type,
+            source_url, fetch_strategy, fetch_config_hash, url_set_hash, content_hash,
+            fetched_at, indexed_at, total_chunks, enabled, metadata
+        ) VALUES (
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, $10,
+            $11::timestamptz, $12::timestamptz, $13, $14, $15::jsonb
+        )
+        ON CONFLICT (corpus_id, snapshot_id) DO UPDATE SET
+            source_version = EXCLUDED.source_version,
+            resolved_version = EXCLUDED.resolved_version,
+            source_type = EXCLUDED.source_type,
+            source_url = EXCLUDED.source_url,
+            fetch_strategy = EXCLUDED.fetch_strategy,
+            fetch_config_hash = EXCLUDED.fetch_config_hash,
+            url_set_hash = EXCLUDED.url_set_hash,
+            content_hash = EXCLUDED.content_hash,
+            fetched_at = EXCLUDED.fetched_at,
+            indexed_at = EXCLUDED.indexed_at,
+            total_chunks = EXCLUDED.total_chunks,
+            enabled = EXCLUDED.enabled,
+            metadata = EXCLUDED.metadata
+        """,
+        version.corpus_id,
+        version.snapshot_id,
+        version.source_version,
+        version.resolved_version,
+        version.source_type,
+        version.source_url,
+        version.fetch_strategy,
+        version.fetch_config_hash,
+        version.url_set_hash,
+        version.content_hash,
+        version.fetched_at,
+        version.indexed_at,
+        version.total_chunks,
+        version.enabled,
+        json.dumps(version.metadata),
+    )
+
+
+async def list_doc_versions(pool: asyncpg.Pool, corpus_id: str, *, enabled_only: bool = True):
+    query = """
+        SELECT v.*, a.aliases
+        FROM doc_versions v
+        LEFT JOIN (
+            SELECT corpus_id, snapshot_id, array_agg(alias ORDER BY alias) AS aliases
+            FROM doc_version_aliases
+            GROUP BY corpus_id, snapshot_id
+        ) a ON a.corpus_id = v.corpus_id AND a.snapshot_id = v.snapshot_id
+        WHERE v.corpus_id = $1
+    """
+    if enabled_only:
+        query += " AND v.enabled = true"
+    query += " ORDER BY v.fetched_at DESC, v.source_version"
+    rows = await pool.fetch(query, corpus_id)
+    return rows
+
+
+async def get_doc_version(pool: asyncpg.Pool, corpus_id: str, selector: str):
+    resolved = await resolve_version_selector(pool, corpus_id, selector)
+    if resolved is None:
+        return None
+    return await pool.fetchrow(
+        "SELECT * FROM doc_versions WHERE corpus_id = $1 AND snapshot_id = $2",
+        corpus_id,
+        resolved,
+    )
+
+
+async def upsert_version_alias(pool: asyncpg.Pool, corpus_id: str, alias: str, snapshot_id: str) -> None:
+    await pool.execute(
+        """
+        INSERT INTO doc_version_aliases (corpus_id, alias, snapshot_id, updated_at)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (corpus_id, alias) DO UPDATE SET
+            snapshot_id = EXCLUDED.snapshot_id,
+            updated_at = now()
+        """,
+        corpus_id,
+        alias,
+        snapshot_id,
+    )
+
+
+async def get_default_snapshot_id(pool: asyncpg.Pool, corpus_id: str) -> str:
+    latest = await resolve_version_selector(pool, corpus_id, "latest")
+    if latest:
+        return latest
+    newest = await pool.fetchval(
+        """
+        SELECT snapshot_id
+        FROM doc_versions
+        WHERE corpus_id = $1 AND enabled = true
+        ORDER BY fetched_at DESC
+        LIMIT 1
+        """,
+        corpus_id,
+    )
+    return str(newest) if newest else "legacy"
+
+
+async def resolve_version_selector(pool: asyncpg.Pool, corpus_id: str, selector: str) -> str | None:
+    alias_snapshot = await pool.fetchval(
+        "SELECT snapshot_id FROM doc_version_aliases WHERE corpus_id = $1 AND alias = $2",
+        corpus_id,
+        selector,
+    )
+    if alias_snapshot:
+        return str(alias_snapshot)
+
+    snapshot = await pool.fetchval(
+        "SELECT snapshot_id FROM doc_versions WHERE corpus_id = $1 AND snapshot_id = $2",
+        corpus_id,
+        selector,
+    )
+    if snapshot:
+        return str(snapshot)
+
+    source_snapshot = await pool.fetchval(
+        """
+        SELECT snapshot_id
+        FROM doc_versions
+        WHERE corpus_id = $1 AND source_version = $2 AND enabled = true
+        ORDER BY fetched_at DESC
+        LIMIT 1
+        """,
+        corpus_id,
+        selector,
+    )
+    return str(source_snapshot) if source_snapshot else None
+
+
+async def update_version_stats(
+    pool: asyncpg.Pool,
+    corpus_id: str,
+    snapshot_id: str,
+    total_chunks: int,
+) -> None:
+    await pool.execute(
+        """
+        UPDATE doc_versions
+        SET indexed_at = now(),
+            total_chunks = $3
+        WHERE corpus_id = $1 AND snapshot_id = $2
+        """,
+        corpus_id,
+        snapshot_id,
+        total_chunks,
+    )
 
 
 async def update_corpus_stats(pool: asyncpg.Pool, slug: str, total_chunks: int) -> None:

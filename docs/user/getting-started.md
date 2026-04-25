@@ -245,10 +245,10 @@ This runs all four stages in sequence:
 
 | Stage | What happens |
 |-------|-------------|
-| **1. Fetch** | Downloads the `llms.txt` manifest, extracts doc URLs, fetches each `.md` file. Output lands in `data/pydantic-ai/raw/`. An incremental manifest tracks what has changed since the last run. |
-| **2. Parse** | Splits each markdown file by headings. Applies a two-pass chunk-size optimization (merges chunks under 500 chars, splits chunks over 2500 chars). Deduplicates by SHA-256 content hash. Output: `data/pydantic-ai/chunks/chunks.jsonl`. |
-| **3. Embed** | Sends each chunk to Gemini (`gemini-embedding-001`, 768-dim vectors), L2-normalizes the result. Uses a per-corpus cache to skip already-embedded chunks (free-tier rate limit: 100 RPM). Output: `data/pydantic-ai/chunks/embedded_chunks.jsonl`. |
-| **4. Index** | Upserts chunks into the `doc_chunks` PostgreSQL table scoped by `corpus_id`. Updates `doc_corpora` stats. Builds GIN and VectorChord indexes. |
+| **1. Fetch** | Downloads the source manifest, extracts doc URLs/files, and writes a versioned snapshot under `{data_root}/pydantic-ai/versions/{snapshot_id}/raw/`. The manifest records source version, snapshot hash, fetch timestamp, and aliases such as `latest`. |
+| **2. Parse** | Splits each markdown file by headings. Applies a two-pass chunk-size optimization (merges chunks under 500 chars, splits chunks over 2500 chars). Deduplicates by SHA-256 content hash within the snapshot. Output: `{snapshot}/chunks/chunks.jsonl`. |
+| **3. Embed** | Sends each chunk to Gemini (`gemini-embedding-001`, 768-dim vectors), L2-normalizes the result. Uses a per-snapshot cache path while reusing vectors by content hash/model/dimensions. Output: `{snapshot}/chunks/embedded_chunks.jsonl`. |
+| **4. Index** | Upserts chunks into the `doc_chunks` PostgreSQL table scoped by `corpus_id` and `snapshot_id`. Updates corpus and version stats. Builds GIN and VectorChord indexes. |
 
 `ensure_schema()` runs automatically at the start of the index stage, creating the `vchord` extension and all tables if they don't exist yet.
 

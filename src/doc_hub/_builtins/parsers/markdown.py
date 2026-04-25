@@ -8,12 +8,12 @@ Entry point name: "markdown"
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from pathlib import Path
 
 from doc_hub.parse import Chunk
+from doc_hub.versions import ManifestFile, load_snapshot_manifest
 
 log = logging.getLogger(__name__)
 
@@ -46,11 +46,11 @@ class MarkdownParser:
         Returns:
             List of raw Chunk objects (before size optimization).
         """
-        url_map = self._load_manifest(input_dir)
+        file_metadata = self._load_manifest(input_dir)
 
-        if url_map:
+        if file_metadata:
             md_files = sorted(
-                input_dir / fn for fn in url_map
+                input_dir / fn for fn in file_metadata
                 if (input_dir / fn).exists()
             )
         else:
@@ -62,8 +62,9 @@ class MarkdownParser:
         all_chunks: list[Chunk] = []
         for md_file in md_files:
             text = md_file.read_text(errors="replace")
-            source_url = url_map.get(md_file.name, "")
-            chunks = self._split_into_chunks(text, md_file.name, source_url)
+            metadata = file_metadata.get(md_file.name)
+            source_url = metadata.url if metadata else ""
+            chunks = self._split_into_chunks(text, md_file.name, source_url, metadata)
             all_chunks.extend(chunks)
 
         log.info(
@@ -76,20 +77,10 @@ class MarkdownParser:
     # --- Private helpers (moved from parse.py) ---
 
     @staticmethod
-    def _load_manifest(input_dir: Path) -> dict[str, str]:
-        """Load manifest.json → {filename: url} for successful entries."""
-        manifest_path = input_dir / "manifest.json"
-        if not manifest_path.exists():
-            return {}
-        try:
-            data = json.loads(manifest_path.read_text())
-            return {
-                f["filename"]: f["url"]
-                for f in data.get("files", [])
-                if f.get("success", False)
-            }
-        except (json.JSONDecodeError, KeyError):
-            return {}
+    def _load_manifest(input_dir: Path) -> dict[str, ManifestFile]:
+        """Load manifest.json → successful file metadata keyed by filename."""
+        manifest = load_snapshot_manifest(input_dir)
+        return manifest.files
 
     @staticmethod
     def _strip_frontmatter(text: str) -> tuple[str, str | None]:
@@ -152,7 +143,7 @@ class MarkdownParser:
             if m:
                 level = len(m.group(1))
                 title = m.group(2).strip()
-                pos = sum(len(l) + 1 for l in text.split("\n")[:i])
+                pos = sum(len(line_part) + 1 for line_part in text.split("\n")[:i])
                 headings.append((level, title, pos, i + 1))
 
         return headings
@@ -189,6 +180,7 @@ class MarkdownParser:
         content: str,
         start_line: int,
         end_line: int | None = None,
+        metadata: ManifestFile | None = None,
     ) -> Chunk:
         """Construct a Chunk with computed hash. Category is always "".
 
@@ -210,6 +202,9 @@ class MarkdownParser:
             char_count=len(content),
             content_hash=hashlib.sha256(content.encode()).hexdigest(),
             category="",  # INTENTIONALLY EMPTY — core pipeline fills this
+            snapshot_id=metadata.snapshot_id or "legacy" if metadata else "legacy",
+            source_version=metadata.source_version or "latest" if metadata else "latest",
+            fetched_at=metadata.fetched_at if metadata else None,
         )
 
     def _split_into_chunks(
@@ -217,6 +212,7 @@ class MarkdownParser:
         text: str,
         source_file: str,
         source_url: str,
+        metadata: ManifestFile | None = None,
     ) -> list[Chunk]:
         """Split a markdown document into chunks at heading boundaries."""
         text, fm_title = self._strip_frontmatter(text)
@@ -237,6 +233,7 @@ class MarkdownParser:
                 content=text,
                 start_line=1,
                 end_line=len(lines),
+                metadata=metadata,
             ))
             return chunks
 
@@ -282,6 +279,7 @@ class MarkdownParser:
                 content=content,
                 start_line=line_num,
                 end_line=end_line_num,
+                metadata=metadata,
             ))
 
         return chunks

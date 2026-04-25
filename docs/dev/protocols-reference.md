@@ -80,7 +80,7 @@ class Parser(Protocol):
 
 ### Return value
 
-`list[Chunk]` — raw chunks before size optimization. Every `Chunk` in the list must have all 11 fields set (see below).
+`list[Chunk]` — raw chunks before size optimization. Every `Chunk` in the list must set the core content fields below; version/provenance fields default to the selected snapshot metadata when not set by a parser.
 
 ### `Chunk` dataclass
 
@@ -100,6 +100,9 @@ class Chunk:
     char_count: int       # len(content)
     content_hash: str     # hashlib.sha256(content.encode()).hexdigest()
     category: str         # MUST be "" — core pipeline derives this
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
+    fetched_at: str | None = None
 ```
 
 ### Field requirements
@@ -117,6 +120,9 @@ class Chunk:
 | `char_count` | `int` | Must equal `len(content)`. |
 | `content_hash` | `str` | `hashlib.sha256(content.encode()).hexdigest()` — used as embed cache key. |
 | `category` | `str` | **Must be `""`** (empty string). Parsers must not derive categories. |
+| `snapshot_id` | `str` | Immutable snapshot identifier. Parsers may leave the default; the parse pipeline fills it from the selected manifest/snapshot. |
+| `source_version` | `str` | Human/source version label. Parsers may leave the default; the parse pipeline fills it from manifest metadata. |
+| `fetched_at` | `str \| None` | Source fetch timestamp propagated from manifest metadata. |
 
 ### What the core pipeline does after `parse()` returns
 

@@ -10,19 +10,22 @@ Keep to the top-level command tree and use the examples below as a quick referen
 .SH COMMANDS
 .TP
 .B doc-hub docs list
-List registered corpora.
+List registered corpora with compact version and alias availability.
+.TP
+.B doc-hub docs versions CORPUS
+List indexed versions and aliases for a corpus.
 .TP
 .B doc-hub man
 Print the built-in manual page.
 .TP
-.B doc-hub docs search --corpus CORPUS [--corpus CORPUS ...] "QUERY"
-Search one or more corpora.
+.B doc-hub docs search --corpus CORPUS [--corpus CORPUS ...] [--version VERSION|--versions V1,V2|--all-versions] "QUERY"
+Search one or more corpora. Version flags are strict; doc-hub does not fall back to unsearched versions.
 .TP
-.B doc-hub docs browse CORPUS
-Browse persisted corpus documents and short IDs.
+.B doc-hub docs browse CORPUS[@VERSION]
+Browse persisted corpus documents and short IDs for the default or selected version.
 .TP
-.B doc-hub docs read CORPUS DOC_ID
-Read a document by its short document ID (shown in browse output).
+.B doc-hub docs read CORPUS[@VERSION] DOC_ID
+Read a document by its snapshot-scoped short document ID (shown in browse output).
 .TP
 .B doc-hub pipeline add [<name>] [--strategy {llms_txt,sitemap,git_repo,local_dir}] [--url URL] [--path PATH] [--slug SLUG] [--no-index] [--interactive] [--use-jina] [--try-md] [--clean] [--url-pattern PATTERN] [--url-suffix SUFFIX] [--base-url URL] [--workers N] [--retries N] [--branch BRANCH] [--docs-dir DIR]
 Register a new documentation corpus and run the full indexing pipeline.
@@ -67,11 +70,27 @@ doc-hub man
 .fi
 .RE
 .PP
+List versions for a corpus:
+.PP
+.RS
+.nf
+doc-hub docs versions react
+.fi
+.RE
+.PP
 Search one corpus:
 .PP
 .RS
 .nf
 doc-hub docs search --corpus pydantic-ai "retry logic"
+.fi
+.RE
+.PP
+Strictly search a selected version:
+.PP
+.RS
+.nf
+doc-hub docs search --corpus react --version 18 "useEffect cleanup"
 .fi
 .RE
 .PP

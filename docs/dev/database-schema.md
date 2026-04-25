@@ -2,8 +2,7 @@
 
 **Source files:** `src/doc_hub/db.py`, `src/doc_hub/index.py`
 
-Three tables: `doc_corpora`, `doc_chunks`, `doc_index_meta`. Seven indexes. Schema created
-idempotently by `ensure_schema(pool)`.
+Five core tables: `doc_corpora`, `doc_versions`, `doc_version_aliases`, `doc_chunks`, `doc_documents`, plus `doc_index_meta` for compatibility metadata. Schema is created idempotently by `ensure_schema(pool)`.
 
 Extension required: **VectorChord** (`vchord CASCADE` — also installs pgvector as a dependency).
 
@@ -27,89 +26,140 @@ CREATE TABLE IF NOT EXISTS doc_corpora (
 )
 ```
 
-| Column | Type | Notes |
-|---|---|---|
-| `slug` | `text PK` | Unique corpus identifier; used as FK in other tables |
-| `name` | `text` | Human-readable display name |
-| `fetch_strategy` | `text` | Name of the registered fetcher plugin |
-| `parser` | `text` | Name of the registered parser plugin (default: `'markdown'`) |
-| `embedder` | `text` | Name of the registered embedder plugin (default: `'gemini'`) |
-| `fetch_config` | `jsonb` | Strategy-specific config dict; passed verbatim to `Fetcher.fetch()` |
-| `enabled` | `boolean` | Whether this corpus participates in `sync_all()` (default: `true`) |
-| `last_indexed_at` | `timestamptz` | Set by `update_corpus_stats()` after each index run; nullable |
-| `total_chunks` | `int` | Set by `update_corpus_stats()` after each index run (default: `0`) |
+`doc_corpora` remains the stable corpus registry. Version-specific state belongs to `doc_versions`.
 
-**CRUD helpers** (all in `db.py`):
+---
 
-| Function | Description |
+## `doc_versions`
+
+Immutable documentation snapshots for a corpus.
+
+```sql
+CREATE TABLE IF NOT EXISTS doc_versions (
+    corpus_id         text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    snapshot_id       text NOT NULL,
+    source_version    text NOT NULL,
+    resolved_version  text,
+    source_type       text NOT NULL,
+    source_url        text NOT NULL,
+    fetch_strategy    text NOT NULL,
+    fetch_config_hash text NOT NULL,
+    url_set_hash      text,
+    content_hash      text NOT NULL,
+    fetched_at        timestamptz NOT NULL,
+    indexed_at        timestamptz,
+    total_chunks      int DEFAULT 0,
+    enabled           boolean DEFAULT true,
+    metadata          jsonb NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (corpus_id, snapshot_id)
+)
+```
+
+| Column | Notes |
 |---|---|
-| `get_corpus(pool, slug)` | Returns `Corpus` or `None` |
-| `list_corpora(pool, enabled_only=True)` | Returns `list[Corpus]`; filters `enabled = true` by default |
-| `upsert_corpus(pool, corpus)` | `INSERT … ON CONFLICT (slug) DO UPDATE`; does NOT touch `last_indexed_at` / `total_chunks` |
-| `update_corpus_stats(pool, slug, total_chunks)` | Sets `last_indexed_at = now()` and `total_chunks` |
+| `snapshot_id` | Immutable doc-hub snapshot identifier. |
+| `source_version` | Human/source label such as `latest`, `18`, `main`, or `v1.2.3`. |
+| `resolved_version` | Immutable upstream revision when available, such as a Git commit SHA. |
+| `fetch_config_hash` | Hash of source-selection-relevant fetch config. |
+| `url_set_hash` | Hash of normalized fetched URL/file set when available. |
+| `content_hash` | Hash of the normalized fetched content set. |
+| `fetched_at` | Source fetch timestamp, distinct from index time. |
+| `indexed_at` | Last successful index timestamp for this snapshot. |
+
+---
+
+## `doc_version_aliases`
+
+Mutable alias pointers such as `latest` or `stable`.
+
+```sql
+CREATE TABLE IF NOT EXISTS doc_version_aliases (
+    corpus_id   text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    alias       text NOT NULL,
+    snapshot_id text NOT NULL,
+    updated_at  timestamptz DEFAULT now(),
+    PRIMARY KEY (corpus_id, alias),
+    FOREIGN KEY (corpus_id, snapshot_id) REFERENCES doc_versions(corpus_id, snapshot_id) ON DELETE CASCADE
+)
+```
+
+Aliases are convenience selectors over immutable snapshots. Search and browse code must resolve an alias to a concrete `snapshot_id` before querying chunks or documents.
 
 ---
 
 ## `doc_chunks`
 
-Main chunks table. One row per unique `(corpus_id, content_hash)` pair.
+Main chunks table. One row per unique `(corpus_id, snapshot_id, content_hash)` tuple.
 
-`_chunks_ddl()` is a **function** (not a constant) because the vector dimension is configurable
-via `DOC_HUB_VECTOR_DIM`. With the default dimension of 768:
+`_chunks_ddl()` is a function because the vector dimension is configurable via `DOC_HUB_VECTOR_DIM`. With the default dimension of 768:
 
 ```sql
 CREATE TABLE IF NOT EXISTS doc_chunks (
-    id           serial PRIMARY KEY,
-    corpus_id    text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
-    content_hash text NOT NULL,
-    heading      text NOT NULL,
-    content      text NOT NULL,
-    tsv          tsvector GENERATED ALWAYS AS (
-                     setweight(to_tsvector('english', heading), 'A') ||
-                     setweight(to_tsvector('english', content), 'B')
-                 ) STORED,
-    embedding    vector(768) NOT NULL,
-    source_file  text NOT NULL,
-    source_url   text NOT NULL,
-    section_path text NOT NULL,
-    heading_level smallint NOT NULL,
-    start_line   int NOT NULL DEFAULT 0,
-    end_line     int NOT NULL DEFAULT 0,
-    char_count   int NOT NULL,
-    category     text NOT NULL,
-    UNIQUE (corpus_id, content_hash)
+    id             serial PRIMARY KEY,
+    corpus_id      text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    content_hash   text NOT NULL,
+    heading        text NOT NULL,
+    content        text NOT NULL,
+    tsv            tsvector GENERATED ALWAYS AS (
+                       setweight(to_tsvector('english', heading), 'A') ||
+                       setweight(to_tsvector('english', content), 'B')
+                   ) STORED,
+    embedding      vector(768) NOT NULL,
+    source_file    text NOT NULL,
+    source_url     text NOT NULL,
+    snapshot_id    text NOT NULL DEFAULT 'legacy',
+    source_version text NOT NULL DEFAULT 'latest',
+    fetched_at     timestamptz,
+    section_path   text NOT NULL,
+    heading_level  smallint NOT NULL,
+    start_line     int NOT NULL DEFAULT 0,
+    end_line       int NOT NULL DEFAULT 0,
+    char_count     int NOT NULL,
+    category       text NOT NULL,
+    document_id    int REFERENCES doc_documents(id) ON DELETE SET NULL,
+    UNIQUE (corpus_id, snapshot_id, content_hash)
 )
 ```
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `serial PK` | Auto-incrementing surrogate key |
-| `corpus_id` | `text FK` | References `doc_corpora(slug)` with `ON DELETE CASCADE` |
-| `content_hash` | `text` | SHA-256 hex of the chunk content; part of unique constraint |
-| `heading` | `text` | Section heading extracted by parser |
-| `content` | `text` | Full chunk text |
-| `tsv` | `tsvector GENERATED STORED` | Weighted full-text index: heading → weight A, content → weight B |
-| `embedding` | `vector({dim})` | L2-normalized embedding; dimension from `DOC_HUB_VECTOR_DIM` |
-| `source_file` | `text` | Relative path of the source file within the corpus raw dir |
-| `source_url` | `text` | Reconstructed URL for this chunk |
-| `section_path` | `text` | `/`-separated heading path within the document |
-| `heading_level` | `smallint` | 1–6; 0 for preamble |
-| `start_line` | `int` | 1-indexed; `0` if unknown |
-| `end_line` | `int` | 1-indexed, inclusive; `0` if unknown |
-| `char_count` | `int` | `len(content)` |
-| `category` | `text` | Derived by `parse.py`; one of: `api`, `example`, `eval`, `guide`, `other` |
+Important constraints:
 
-**Key constraints:**
+- `UNIQUE (corpus_id, snapshot_id, content_hash)` prevents duplicate chunks within one snapshot while allowing identical content across versions.
+- Full reindex stale deletion is scoped by both `corpus_id` and `snapshot_id`.
+- `fetched_at` is source provenance; `indexed_at` belongs to `doc_versions`.
 
-- `UNIQUE (corpus_id, content_hash)` — prevents duplicate chunks within a corpus; drives `ON CONFLICT` upsert in `index.py`.
-- `ON DELETE CASCADE` from `doc_corpora` — deleting a corpus row deletes all its chunks.
-- `heading` and `content` columns appear **before** `tsv` in DDL so PostgreSQL can resolve the generated expression at `CREATE TABLE` time.
+---
+
+## `doc_documents`
+
+Version-scoped document tree used by browse/read commands.
+
+```sql
+CREATE TABLE IF NOT EXISTS doc_documents (
+    id serial PRIMARY KEY,
+    corpus_id text NOT NULL REFERENCES doc_corpora(slug) ON DELETE CASCADE,
+    snapshot_id text NOT NULL DEFAULT 'legacy',
+    source_version text NOT NULL DEFAULT 'latest',
+    doc_path text NOT NULL,
+    title text NOT NULL,
+    source_url text NOT NULL DEFAULT '',
+    source_file text NOT NULL DEFAULT '',
+    parent_id int REFERENCES doc_documents(id) ON DELETE SET NULL,
+    depth smallint NOT NULL DEFAULT 0,
+    sort_order int NOT NULL DEFAULT 0,
+    is_group boolean NOT NULL DEFAULT false,
+    total_chars int NOT NULL DEFAULT 0,
+    section_count int NOT NULL DEFAULT 0,
+    UNIQUE (corpus_id, snapshot_id, doc_path)
+)
+```
+
+Document paths are only unique within a snapshot. The same `doc_path` may exist in multiple snapshots for the same corpus.
 
 ---
 
 ## `doc_index_meta`
 
-Per-corpus key/value metadata. Written after each index run.
+Compatibility per-corpus key/value metadata. New version-level stats should prefer `doc_versions`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS doc_index_meta (
@@ -121,14 +171,7 @@ CREATE TABLE IF NOT EXISTS doc_index_meta (
 )
 ```
 
-| Column | Type | Notes |
-|---|---|---|
-| `corpus_id` | `text FK` | References `doc_corpora(slug)` with `ON DELETE CASCADE` |
-| `key` | `text` | Metadata key; part of composite PK |
-| `value` | `text` | Metadata value (always stored as text) |
-| `updated_at` | `timestamptz` | Set to `now()` on each upsert |
-
-**Keys written by `_write_meta()` in `index.py`:**
+Keys written by `_write_meta()` in `index.py`:
 
 | Key | Value format |
 |---|---|
@@ -137,14 +180,9 @@ CREATE TABLE IF NOT EXISTS doc_index_meta (
 | `embedding_model` | Embedder `model_name` string |
 | `embedding_dimensions` | Vector dimensions as string |
 
-`_write_meta()` uses `INSERT … ON CONFLICT (corpus_id, key) DO UPDATE` so each key is
-upserted independently. Called automatically by `upsert_chunks()` after every index run.
-
 ---
 
 ## Indexes
-
-All created via `IF NOT EXISTS` — idempotent.
 
 ```sql
 CREATE INDEX IF NOT EXISTS doc_chunks_corpus_id_idx
@@ -157,7 +195,10 @@ CREATE INDEX IF NOT EXISTS doc_chunks_corpus_category_idx
     ON doc_chunks (corpus_id, category);
 
 CREATE INDEX IF NOT EXISTS doc_chunks_corpus_hash_idx
-    ON doc_chunks (corpus_id, content_hash);
+    ON doc_chunks (corpus_id, snapshot_id, content_hash);
+
+CREATE INDEX IF NOT EXISTS doc_chunks_corpus_snapshot_idx
+    ON doc_chunks (corpus_id, snapshot_id);
 
 CREATE INDEX IF NOT EXISTS doc_chunks_source_url_idx
     ON doc_chunks (source_url text_pattern_ops);
@@ -167,153 +208,42 @@ CREATE INDEX IF NOT EXISTS doc_chunks_section_path_idx
 
 CREATE INDEX IF NOT EXISTS doc_chunks_heading_level_idx
     ON doc_chunks (heading_level);
+
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_id_idx
+    ON doc_documents (corpus_id);
+
+CREATE INDEX IF NOT EXISTS doc_documents_parent_id_idx
+    ON doc_documents (parent_id);
+
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_sort_order_idx
+    ON doc_documents (corpus_id, snapshot_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS doc_documents_corpus_path_idx
+    ON doc_documents (corpus_id, snapshot_id, doc_path text_pattern_ops);
 ```
 
-| Index | Type | Purpose |
-|---|---|---|
-| `doc_chunks_corpus_id_idx` | B-tree | Corpus-scoped queries and joins |
-| `doc_chunks_corpus_tsv_idx` | GIN | Full-text search via `tsv @@ query` |
-| `doc_chunks_corpus_category_idx` | B-tree (composite) | Category filter scoped by corpus |
-| `doc_chunks_corpus_hash_idx` | B-tree (composite) | Hash lookups and stale-deletion scoped by corpus |
-| `doc_chunks_source_url_idx` | B-tree (`text_pattern_ops`) | `LIKE 'prefix%'` scans on `source_url` |
-| `doc_chunks_section_path_idx` | B-tree (`text_pattern_ops`) | `LIKE 'prefix%'` scans on `section_path` |
-| `doc_chunks_heading_level_idx` | B-tree | Filter by heading level |
+The GIN index remains on `tsv` alone because GIN indexes do not support composite keys. Version-scoped FTS combines the GIN scan with B-tree filters on `corpus_id` and `snapshot_id`.
 
-**GIN limitation:** GIN indexes do not support composite keys. The GIN index is on `tsv`
-alone. Corpus-scoped FTS queries combine the GIN scan with the separate B-tree
-`doc_chunks_corpus_id_idx`. This is a known PostgreSQL constraint, not a design gap.
+---
 
-**`text_pattern_ops`:** Used for `source_url` and `section_path` to support locale-independent
-LIKE prefix scans (e.g., `source_url LIKE 'https://docs.example.com/%'`).
+## Legacy Migration Notes
+
+`ensure_schema()` creates new tables and also repairs older schemas in place:
+
+- `doc_corpora.parser` and `doc_corpora.embedder` are added if missing.
+- `doc_chunks.snapshot_id`, `doc_chunks.source_version`, and `doc_chunks.fetched_at` are added if missing.
+- `doc_documents.snapshot_id` and `doc_documents.source_version` are added if missing.
+
+Legacy rows default to `snapshot_id = 'legacy'` and `source_version = 'latest'`. A later refresh can create immutable snapshot rows in `doc_versions`.
 
 ---
 
 ## Vector Dimension Configuration
 
-The `embedding` column type is `vector({dim})` where `{dim}` comes from:
-
-```python
-# db.py
-def get_vector_dim() -> int:
-    raw = os.getenv("DOC_HUB_VECTOR_DIM", "768")
-    ...
-    return dim
-```
-
-`DOC_HUB_VECTOR_DIM` defaults to `768`. Must be a positive integer.
-
-**Dimension mismatch detection:** `ensure_schema()` queries `pg_attribute` to read the
-`atttypmod` of the existing `embedding` column after `CREATE TABLE IF NOT EXISTS`. If the
-configured dimension differs from the existing column dimension, it raises `RuntimeError`:
-
-```
-Existing doc_chunks table has vector(768) but DOC_HUB_VECTOR_DIM=1536. To fix this, either:
-  1. Set DOC_HUB_VECTOR_DIM=768 to match the existing table, or
-  2. DROP TABLE doc_chunks and let doc-hub recreate it with the new dimension.
-     (This will delete all indexed data — re-index all corpora after.)
-```
-
-This prevents silent failures where `CREATE TABLE IF NOT EXISTS` preserves the old schema
-but subsequent INSERTs fail with cryptic dimension mismatch errors.
+The `embedding` column type is `vector({dim})` where `{dim}` comes from `DOC_HUB_VECTOR_DIM`, defaulting to 768. `ensure_schema()` checks the existing column dimension and raises `RuntimeError` if it differs from the configured dimension.
 
 ---
 
 ## JSONB Codec
 
-asyncpg does **not** auto-serialize Python dicts to/from `jsonb`. Without a codec,
-asyncpg raises `TypeError` on write and returns raw JSON strings on read.
-
-`_init_connection()` registers a custom codec on every new connection:
-
-```python
-# db.py
-async def _init_connection(conn: asyncpg.Connection) -> None:
-    await conn.set_type_codec(
-        "jsonb",
-        encoder=json.dumps,
-        decoder=json.loads,
-        schema="pg_catalog",
-    )
-```
-
-This is passed as the `init` callback to `asyncpg.create_pool()`, so every connection in
-the pool gets it automatically. After registration, Python `dict` ↔ JSONB round-trips
-transparently at all call sites.
-
-`upsert_corpus()` also calls `json.dumps(corpus.fetch_config)` explicitly as a
-belt-and-suspenders measure — safe even when the codec is active.
-
----
-
-## Connection Pool
-
-```python
-# db.py
-pool = await asyncpg.create_pool(
-    resolved_dsn,
-    min_size=1,
-    max_size=10,
-    init=_init_connection,
-)
-```
-
-Pool size: `min_size=1, max_size=10`.
-
-**DSN resolution order** (in `_build_dsn()`):
-
-1. Explicit `dsn` argument to `create_pool()`
-2. `DOC_HUB_DATABASE_URL` env var (full connection string)
-3. Individual `PG*` env vars: `PGHOST` (default `localhost`), `PGPORT` (default `5432`),
-   `PGDATABASE` (default `doc_hub`), `PGUSER` (default `postgres`), `PGPASSWORD` (no default — must be set)
-
----
-
-## Advisory Locks
-
-`upsert_chunks()` acquires a per-corpus advisory lock at the start of each index transaction:
-
-```sql
-SELECT pg_advisory_xact_lock(hashtext($1))
-```
-
-where `$1` is the corpus slug. The lock is **transaction-scoped** — released automatically
-on commit or rollback.
-
-This prevents concurrent index operations on the same corpus (e.g., overlapping MCP refresh
-and cron sync) from interleaving writes. Locks for different corpora are independent.
-
----
-
-## `xmax = 0` INSERT/UPDATE Detection
-
-The upsert SQL in `index.py` uses a `RETURNING` clause to distinguish true inserts from
-conflict-triggered updates:
-
-```sql
-INSERT INTO doc_chunks (...)
-VALUES (...)
-ON CONFLICT (corpus_id, content_hash) DO UPDATE SET ...
-RETURNING (xmax = 0) AS is_insert
-```
-
-`xmax = 0` is true for a freshly inserted row; for an `ON CONFLICT DO UPDATE` row, `xmax`
-holds the transaction ID of the updating transaction and is non-zero. This is used to
-maintain accurate `inserted` vs `updated` counts in `IndexResult`.
-
-Note: asyncpg's `execute()` always returns `'INSERT 0 1'` for both branches of an
-`ON CONFLICT DO UPDATE` — the status string alone cannot distinguish inserts from updates,
-hence the `RETURNING` approach.
-
----
-
-## `_parse_command_count()`
-
-```python
-# index.py
-def _parse_command_count(status: str) -> int:
-```
-
-Parses asyncpg execute status strings like `'DELETE 5'`, `'INSERT 0 1'`, `'UPDATE 3'`.
-The last whitespace-separated token is the affected row count. Returns `0` on parse failure.
-
-Used to extract the deleted-row count from the stale-cleanup `DELETE` in full-mode indexing.
+asyncpg does not auto-serialize Python dicts to/from `jsonb`. `_init_connection()` registers a JSONB codec on every connection in the pool so Python `dict` values round-trip transparently.

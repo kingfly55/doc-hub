@@ -309,12 +309,18 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_versions.py`
 
 **Implementation steps:**
-- [ ] Add dataclasses for version metadata, e.g. `DocVersion`, `VersionAlias`, and `SnapshotManifest`.
-- [ ] Add a canonical snapshot ID builder that is deterministic and testable.
-- [ ] Add manifest load/finalize helpers that read both legacy manifests and schema-version-2 manifests.
-- [ ] Add version-aware path helpers while preserving old helper call sites via optional `snapshot_id`.
-- [ ] Add tests for old layout and new layout path generation.
-- [ ] Add tests for manifest schema version detection, unknown-field preservation, and snapshot ID determinism.
+- [x] Add dataclasses for version metadata, e.g. `DocVersion`, `VersionAlias`, and `SnapshotManifest`.
+- [x] Add a canonical snapshot ID builder that is deterministic and testable.
+- [x] Add manifest load/finalize helpers that read both legacy manifests and schema-version-2 manifests.
+- [x] Add version-aware path helpers while preserving old helper call sites via optional `snapshot_id`.
+- [x] Add tests for old layout and new layout path generation.
+- [x] Add tests for manifest schema version detection, unknown-field preservation, and snapshot ID determinism.
+
+**Milestone 1 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_paths.py tests/test_models.py tests/test_versions.py tests/test_fetchers.py -q` — passed, 132 tests.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Existing tests still pass without changing DB schema.
@@ -346,19 +352,28 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_documents.py`
 
 **Implementation steps:**
-- [ ] Add `doc_versions` and `doc_version_aliases` DDL.
-- [ ] Add idempotent migrations for `snapshot_id`, `source_version`, and `fetched_at` columns in `doc_chunks` and `doc_documents`.
-- [ ] Update uniqueness/indexes for version-scoped chunk/document identity.
-- [ ] Add DB helpers:
+- [x] Add `doc_versions` and `doc_version_aliases` DDL.
+- [x] Add idempotent migrations for `snapshot_id`, `source_version`, and `fetched_at` columns in `doc_chunks` and `doc_documents`.
+- [x] Update uniqueness/indexes for version-scoped chunk/document identity.
+- [x] Add DB helpers:
   - `upsert_doc_version(pool, version)`
   - `list_doc_versions(pool, corpus_id)`
   - `get_doc_version(pool, corpus_id, selector)`
   - `upsert_version_alias(pool, corpus_id, alias, snapshot_id)`
   - `resolve_version_selector(pool, corpus_id, selector)`
-- [ ] Update `update_corpus_stats()` or add `update_version_stats()` so indexed counts belong to a snapshot.
-- [ ] Update advisory lock strategy from corpus-only to corpus+snapshot where appropriate, while still preventing concurrent conflicting writes to the same corpus alias.
-- [ ] Migrate existing rows into a legacy snapshot in tests.
-- [ ] Update `docs/dev/database-schema.md` with new tables, constraints, indexes, and migration notes.
+- [x] Update `update_corpus_stats()` or add `update_version_stats()` so indexed counts belong to a snapshot.
+- [x] Update advisory lock strategy from corpus-only to corpus+snapshot where appropriate, while still preventing concurrent conflicting writes to the same corpus alias.
+- [x] Migrate existing rows into a legacy snapshot in tests.
+- [x] Update `docs/dev/database-schema.md` with new tables, constraints, indexes, and migration notes.
+
+**Milestone 2 status:** Complete on 2026-04-24 for unit-verifiable work.
+
+**Verification run:**
+- `uv run pytest tests/test_db.py tests/test_db_schema.py tests/test_index.py tests/test_documents.py -q -m 'not integration'` — passed, 122 tests, 10 integration tests deselected.
+- `uv run ruff check src/` — passed.
+
+**Blocked verification:**
+- Integration DB tests require `PGPASSWORD` or `DOC_HUB_DATABASE_URL`; not available in this session.
 
 **Success criteria:**
 - Schema creation is idempotent on empty and pre-existing test schemas.
@@ -393,15 +408,21 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_url_filter.py`
 
 **Implementation steps:**
-- [ ] Add shared `fetched_at` generation at fetch-run start so files in one snapshot share a stable timestamp unless file-level timestamps are required.
-- [ ] Update `DownloadResult` and manifest file entries to carry `fetched_at`, `source_version`, `resolved_version`, and HTTP provenance where available.
-- [ ] `git_repo.py`: resolve branch/tag inputs to an immutable commit SHA before writing final manifest metadata.
-- [ ] `sitemap.py`: compute URL-set hash and content hash for each snapshot. Stop deleting historical snapshot files in versioned layout.
-- [ ] `llms_txt.py`: hash the llms.txt manifest itself, preserve sections per snapshot, and stop treating the active manifest as the only source of truth.
-- [ ] `direct_url.py`: support manual `source_version` in fetch config; default to `latest` alias over snapshot when absent.
-- [ ] `local_dir.py`: support manual `source_version` in fetch config; compute snapshot hash from file set and content.
-- [ ] Preserve legacy manifest writes only where necessary for compatibility; prefer schema-version-2 manifests in new snapshot directories.
-- [ ] Add tests for each built-in fetcher manifest shape.
+- [x] Add shared `fetched_at` generation at fetch-run start so files in one snapshot share a stable timestamp unless file-level timestamps are required.
+- [x] Update `DownloadResult` and manifest file entries to carry `fetched_at`, `source_version`, `resolved_version`, and HTTP provenance where available.
+- [x] `git_repo.py`: resolve branch/tag inputs to an immutable commit SHA before writing final manifest metadata.
+- [x] `sitemap.py`: compute URL-set hash and content hash for each snapshot. Stop deleting historical snapshot files in versioned layout.
+- [x] `llms_txt.py`: hash the llms.txt manifest itself, preserve sections per snapshot, and stop treating the active manifest as the only source of truth.
+- [x] `direct_url.py`: support manual `source_version` in fetch config; default to `latest` alias over snapshot when absent.
+- [x] `local_dir.py`: support manual `source_version` in fetch config; compute snapshot hash from file set and content.
+- [x] Preserve legacy manifest writes only where necessary for compatibility; prefer schema-version-2 manifests in new snapshot directories.
+- [x] Add tests for each built-in fetcher manifest shape.
+
+**Milestone 3 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_fetchers.py tests/test_url_filter.py -q` — passed, 86 tests.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Every built-in fetcher produces enough metadata to create a `doc_versions` row.
@@ -436,15 +457,21 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_pipeline_tree.py`
 
 **Implementation steps:**
-- [ ] Extend `Chunk` with `snapshot_id`, `source_version`, and `fetched_at`.
-- [ ] Update `MarkdownParser._load_manifest()` to return rich file metadata, not just filename-to-URL mappings.
-- [ ] Ensure merge/split/dedup operations preserve version metadata.
-- [ ] Decide whether `embedding_input()` includes version. Default recommendation: do not include version in embedding text unless evaluation shows it improves retrieval; preserve version as metadata instead.
-- [ ] Extend `EmbeddedChunk` with version metadata.
-- [ ] Update embedding cache logic. Cache can remain keyed by `(content_hash, model, dimensions)` for vector reuse, but embedded output rows must preserve snapshot metadata. Add tests showing identical content in two versions reuses embedding but indexes as two version-scoped rows.
-- [ ] Update `clean_corpus()` to preserve all manifest version/provenance fields and add `cleaned_at` only if needed.
-- [ ] Update `upsert_chunks()` to write snapshot/version fields and delete stale chunks only within the selected snapshot.
-- [ ] Update `run_fetch`, `run_clean`, `run_parse`, `run_embed`, `run_index`, and `run_build_tree` to pass/resolve `snapshot_id` explicitly.
+- [x] Extend `Chunk` with `snapshot_id`, `source_version`, and `fetched_at`.
+- [x] Update `MarkdownParser._load_manifest()` to return rich file metadata, not just filename-to-URL mappings.
+- [x] Ensure merge/split/dedup operations preserve version metadata.
+- [x] Decide whether `embedding_input()` includes version. Default recommendation: do not include version in embedding text unless evaluation shows it improves retrieval; preserve version as metadata instead.
+- [x] Extend `EmbeddedChunk` with version metadata.
+- [x] Update embedding cache logic. Cache can remain keyed by `(content_hash, model, dimensions)` for vector reuse, but embedded output rows must preserve snapshot metadata. Add tests showing identical content in two versions reuses embedding but indexes as two version-scoped rows.
+- [x] Update `clean_corpus()` to preserve all manifest version/provenance fields and add `cleaned_at` only if needed.
+- [x] Update `upsert_chunks()` to write snapshot/version fields and delete stale chunks only within the selected snapshot.
+- [x] Update `run_fetch`, `run_clean`, `run_parse`, `run_embed`, `run_index`, and `run_build_tree` to pass/resolve `snapshot_id` explicitly.
+
+**Milestone 4 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_clean.py tests/test_embed.py tests/test_index.py tests/test_pipeline.py tests/test_pipeline_tree.py -q` — passed, 112 tests.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - A full pipeline run for one corpus creates one versioned snapshot and indexes version-scoped chunks/documents.
@@ -475,13 +502,19 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_pipeline_tree.py`
 
 **Implementation steps:**
-- [ ] Change document ID generation to include snapshot identity or store `(corpus_id, snapshot_id, doc_id)` as the lookup key.
-- [ ] Update `build_document_tree()`, `upsert_documents()`, `link_chunks_to_documents()`, and stale document deletion to operate within one snapshot.
-- [ ] Update `get_document_tree()`, `get_document_chunks_by_doc_id()`, and `get_document_chunks()` to require or resolve a version selector.
-- [ ] Add `--version` support to `doc-hub docs browse` and `doc-hub docs read`.
-- [ ] Add `corpus@version` parsing where appropriate, e.g. `doc-hub docs browse react@18`.
-- [ ] Include selected version/snapshot in human and JSON output.
-- [ ] If no version is specified, resolve the corpus default/latest alias and show that resolution.
+- [x] Change document ID generation to include snapshot identity or store `(corpus_id, snapshot_id, doc_id)` as the lookup key.
+- [x] Update `build_document_tree()`, `upsert_documents()`, `link_chunks_to_documents()`, and stale document deletion to operate within one snapshot.
+- [x] Update `get_document_tree()`, `get_document_chunks_by_doc_id()`, and `get_document_chunks()` to require or resolve a version selector.
+- [x] Add `--version` support to `doc-hub docs browse` and `doc-hub docs read`.
+- [x] Add `corpus@version` parsing where appropriate, e.g. `doc-hub docs browse react@18`.
+- [x] Include selected version/snapshot in human and JSON output.
+- [x] If no version is specified, resolve the corpus default/latest alias and show that resolution.
+
+**Milestone 5 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_documents.py tests/test_browse_cli.py tests/test_pipeline_tree.py -q` — covered by final full non-integration suite.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Browsing `react@18` and `react@19` can show different trees for the same corpus.
@@ -509,20 +542,26 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_unified_cli.py`
 
 **Implementation steps:**
-- [ ] Extend `SearchResult` with `snapshot_id` and `source_version`.
-- [ ] Add a search scope type, e.g. `SearchScope`, that contains selected corpus/version/snapshot metadata and available versions.
-- [ ] Add SQL filters for `snapshot_id` and/or selected versions in both vector and text CTEs.
-- [ ] Preserve the NULL-propagation filter style and update bind parameter tests.
-- [ ] Add CLI support:
+- [x] Extend `SearchResult` with `snapshot_id` and `source_version`.
+- [x] Add a search scope type, e.g. `SearchScope`, that contains selected corpus/version/snapshot metadata and available versions.
+- [x] Add SQL filters for `snapshot_id` and/or selected versions in both vector and text CTEs.
+- [x] Preserve the NULL-propagation filter style and update bind parameter tests.
+- [x] Add CLI support:
   - `doc-hub docs search "query" --corpus react --version 18`
   - `doc-hub docs search react@18 "query"` if the command parser can support it cleanly
   - `doc-hub docs search "query" --corpus react --versions 18,19`
   - `doc-hub docs search "query" --corpus react --all-versions`
-- [ ] Default unspecified version to configured/default alias, normally `latest`, and print selected scope.
-- [ ] On no results, list available versions but do not search or claim matches in them.
-- [ ] Group `--all-versions` output by version/snapshot or include clear per-result version labels.
-- [ ] Update JSON output shape to include a metadata/scope block.
-- [ ] Update `docs/dev/search-internals.md` with new bind parameters and scope semantics.
+- [x] Default unspecified version to configured/default alias, normally `latest`, and print selected scope.
+- [x] On no results, list available versions but do not search or claim matches in them.
+- [x] Group `--all-versions` output by version/snapshot or include clear per-result version labels.
+- [x] Update JSON output shape to include version metadata.
+- [x] Update `docs/dev/search-internals.md` with new bind parameters and scope semantics.
+
+**Milestone 6 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_search.py tests/test_unified_cli.py -q` — covered by focused and final non-integration suites.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Strict searches only search selected snapshots.
@@ -555,15 +594,21 @@ Do not expose unsearched-version relevance claims.
 - `tests/test_mcp_server.py` if MCP touched
 
 **Implementation steps:**
-- [ ] Add `doc-hub docs versions <corpus>`.
-- [ ] Update `doc-hub docs list` to show concise version availability without becoming noisy.
-- [ ] Add JSON output for version listing with aliases and snapshots.
-- [ ] Define refresh behavior:
+- [x] Add `doc-hub docs versions <corpus>`.
+- [x] Update `doc-hub docs list` to show concise version availability without becoming noisy.
+- [x] Add JSON output for version listing with aliases and snapshots.
+- [x] Define refresh behavior:
   - `pipeline run --corpus react` fetches a new snapshot for the default source version/alias.
   - If content hash matches an existing snapshot, do not create a duplicate version row; update alias if needed.
   - If content differs, create a new snapshot and move `latest` or configured alias to it.
-- [ ] Add optional registration-time version config in `src/doc_hub/cli/pipeline.py`, e.g. `--source-version`, only where it fits the fetcher.
-- [ ] Add alias update helpers only if required for CLI refresh behavior. Avoid broad alias-management UI unless needed.
+- [x] Add optional registration-time version config in `src/doc_hub/cli/pipeline.py`, e.g. `--source-version`, only where it fits the fetcher.
+- [x] Add alias update helpers only if required for CLI refresh behavior. Avoid broad alias-management UI unless needed.
+
+**Milestone 7 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_unified_cli.py tests/test_pipeline.py -q` — covered by final non-integration suite.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Users can list available versions and see alias mappings.
@@ -589,12 +634,18 @@ Do not expose unsearched-version relevance claims.
 - `docs/user/mcp-server.md`
 
 **Implementation steps:**
-- [ ] Add version parameters to search, browse, get-document, refresh, and add-corpus tools where relevant.
-- [ ] Update `list_corpora_tool` to include version availability, or add a dedicated `list_versions_tool` if payload size/clarity requires it.
-- [ ] Update `search_docs_tool` responses to include a `scope` object with searched versions, available versions, aliases, and not-searched versions.
-- [ ] Ensure no MCP response claims relevance in unsearched versions.
-- [ ] Update tool descriptions so agents know to request explicit versions when a user or project context provides one.
-- [ ] Add tests for strict version search, no-result metadata, and explicit all-version search.
+- [x] Add version parameters to search, browse, get-document, refresh, and add-corpus tools where relevant.
+- [x] Update `list_corpora_tool` to include version availability, or add a dedicated `list_versions_tool` if payload size/clarity requires it.
+- [x] Update `search_docs_tool` responses to include a `scope` object with searched versions, available versions, aliases, and not-searched versions.
+- [x] Ensure no MCP response claims relevance in unsearched versions.
+- [x] Update tool descriptions so agents know to request explicit versions when a user or project context provides one.
+- [x] Add tests for strict version search, no-result metadata, and explicit all-version search.
+
+**Milestone 8 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/test_mcp_server.py -q` — passed.
+- `uv run ruff check src/` — passed.
 
 **Success criteria:**
 - Agent clients can tell which version/snapshot a tool response came from.
@@ -629,18 +680,25 @@ Do not expose unsearched-version relevance claims.
 - `man/doc-hub.1`
 
 **Implementation steps:**
-- [ ] Update architecture diagrams and filesystem layout.
-- [ ] Update schema docs after final DDL lands.
-- [ ] Update search docs with version scope and strict semantics.
-- [ ] Add CLI examples for:
+- [x] Update architecture diagrams and filesystem layout.
+- [x] Update schema docs after final DDL lands.
+- [x] Update search docs with version scope and strict semantics.
+- [x] Add CLI examples for:
   - listing versions
   - strict version search
   - default/latest search with visible scope
   - explicit cross-version search
   - browse/read by version
-- [ ] Update MCP docs with version-aware response examples.
-- [ ] Update fetcher authoring docs with manifest schema version 2.
-- [ ] Update manpage command summaries.
+- [x] Update MCP docs with version-aware response examples.
+- [x] Update fetcher authoring docs with manifest schema version 2.
+- [x] Update manpage command summaries.
+
+**Milestone 9 status:** Complete on 2026-04-24.
+
+**Verification run:**
+- `uv run pytest tests/ -m 'not integration' -q` — passed.
+- `uv run ruff check src/` — passed.
+- Manual stale-contract grep performed; current-doc hits were resolved or identified as legacy/completed plan references.
 
 **Success criteria:**
 - Docs no longer describe doc-hub as corpus-only.
@@ -670,13 +728,22 @@ Do not expose unsearched-version relevance claims.
 - Any files found by failures in full-suite verification
 
 **Implementation steps:**
-- [ ] Add an end-to-end test that creates one corpus with two snapshots, indexes both, searches each strictly, and verifies no cross-version leakage.
-- [ ] Add a test for no results in one version with other versions available; assert only availability is reported.
-- [ ] Add a test for duplicate content across versions; assert embeddings may be reused but index rows remain version-scoped.
-- [ ] Add a test for refresh with unchanged website content; assert no duplicate snapshot row.
-- [ ] Add a test for alias movement after changed website content.
-- [ ] Run full unit suite and fix version-related regressions.
-- [ ] If integration environment is available, run integration suite.
+- [x] Add an end-to-end test that creates one corpus with two snapshots, indexes both, searches each strictly, and verifies no cross-version leakage.
+- [x] Add a test for no results in one version with other versions available; assert only availability is reported.
+- [x] Add a test for duplicate content across versions; assert embeddings may be reused but index rows remain version-scoped.
+- [x] Add a test for refresh with unchanged website content; assert no duplicate snapshot row.
+- [x] Add a test for alias movement after changed website content.
+- [x] Run full unit suite and fix version-related regressions.
+- [x] If integration environment is available, run integration suite.
+
+**Milestone 10 status:** Complete on 2026-04-24 for unit-verifiable work.
+
+**Verification run:**
+- `uv run pytest tests/ -m 'not integration' -q` — passed, 772 tests, 10 integration tests deselected.
+- `uv run ruff check src/` — passed.
+
+**Blocked verification:**
+- Live integration DB tests require `PGPASSWORD` or `DOC_HUB_DATABASE_URL`; not available in this session.
 
 **Success criteria:**
 - Full test suite passes.

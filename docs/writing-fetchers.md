@@ -148,7 +148,7 @@ A fetcher **should**:
 
 4. **Create `output_dir`** if it doesn't exist (`output_dir.mkdir(parents=True, exist_ok=True)`).
 5. **Read config from `fetch_config`** — fail fast with a clear error if required keys are missing.
-6. **Write `manifest.json`** — enables incremental sync so only new/changed URLs are downloaded on subsequent runs. See the built-in `LlmsTxtFetcher` for an example implementation using `load_manifest`, `compute_manifest_diff`, and `write_manifest` from `doc_hub._builtins.fetchers.llms_txt`.
+6. **Write `manifest.json`** — enables incremental sync and version provenance. New fetchers should use schema version 2 with `source`, `snapshot`, `aliases`, and per-file metadata (`content_hash`, `fetched_at`, `source_version`, `resolved_version`, `snapshot_id`). See `doc_hub.versions.snapshot_manifest_from_downloads()` and `write_snapshot_manifest()`.
 
 A fetcher **must not**:
 
@@ -169,5 +169,44 @@ doc-hub ships four built-in fetchers registered via entry points:
 | `git_repo` | `GitRepoFetcher` | Clones a git repository and extracts markdown files |
 
 > **Shared helper**: both `llms_txt` and `sitemap` use `doc_hub._builtins.fetchers.url_filter.build_exclude_filter()` to compile exclusion rules. If you're authoring a new web-based fetcher with similar needs, reuse that helper for consistent semantics (see `url_filter.py` for the full contract).
+
+## Versioned manifest shape
+
+A schema-version-2 manifest should include enough information to create an immutable `doc_versions` row:
+
+```json
+{
+  "schema_version": 2,
+  "corpus_slug": "my-docs",
+  "fetch_strategy": "my_fetcher",
+  "source": {
+    "type": "website",
+    "url": "https://docs.example.com/",
+    "source_version": "latest",
+    "resolved_version": null,
+    "fetched_at": "2026-04-24T12:00:00+00:00"
+  },
+  "snapshot": {
+    "snapshot_id": "sha256-...",
+    "url_set_hash": "sha256:...",
+    "content_hash": "sha256:...",
+    "fetch_config_hash": "sha256:..."
+  },
+  "aliases": ["latest"],
+  "files": [
+    {
+      "filename": "guide.md",
+      "url": "https://docs.example.com/guide",
+      "success": true,
+      "content_hash": "sha256:...",
+      "fetched_at": "2026-04-24T12:00:00+00:00",
+      "source_version": "latest",
+      "snapshot_id": "sha256-..."
+    }
+  ]
+}
+```
+
+Use `source_version` for the upstream label (`main`, `18`, `latest`) and `snapshot_id` for the immutable fetched state. Website `latest` should be treated as a mutable alias over an immutable snapshot.
 
 The authoritative protocol documentation is in `doc_hub/protocols.py`. This guide is a quickstart — refer to the protocol docstrings for the full contract.

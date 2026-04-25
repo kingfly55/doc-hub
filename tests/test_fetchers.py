@@ -127,9 +127,13 @@ async def test_local_dir_fetcher_nonexistent_raises():
 @pytest.mark.asyncio
 async def test_local_dir_fetcher_returns_path(tmp_path):
     """LocalDirFetcher returns the configured path when the directory exists."""
+    (tmp_path / "index.md").write_text("# Index")
     fetcher = LocalDirFetcher()
     result = await fetcher.fetch("test", {"path": str(tmp_path)}, Path("/tmp"))
     assert result == tmp_path
+    data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
+    assert data["files"][0]["source_version"] == "latest"
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +231,11 @@ def test_write_manifest_creates_file(tmp_path):
     ]
     write_manifest(results, tmp_path)
     data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
     assert data["total"] == 2
     assert data["success"] == 1
     assert data["failed"] == 1
+    assert data["snapshot"]["snapshot_id"].startswith("sha256-")
     filenames = [f["filename"] for f in data["files"]]
     assert "a.md" in filenames
     assert "b.md" in filenames
@@ -243,6 +249,8 @@ def test_write_manifest_includes_content_hash(tmp_path):
     write_manifest(results, tmp_path)
     data = json.loads((tmp_path / "manifest.json").read_text())
     assert data["files"][0]["content_hash"] == "abc123"
+    assert data["files"][0]["source_version"] == "latest"
+    assert data["files"][0]["fetched_at"] is not None
 
 
 def test_write_manifest_sorted_by_filename(tmp_path):
@@ -500,8 +508,11 @@ async def test_llms_txt_fetcher_writes_manifest(tmp_path):
 
     assert (tmp_path / "manifest.json").exists()
     data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
     assert "total" in data
     assert "files" in data
+    assert data["source"]["source_version"] == "latest"
+    assert data["snapshot"]["snapshot_id"].startswith("sha256-")
 
 
 @pytest.mark.asyncio

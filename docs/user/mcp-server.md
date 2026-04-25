@@ -218,6 +218,9 @@ Search indexed documentation using hybrid vector + full-text retrieval. Searches
 | `categories` | `list[str] \| None` | `None` | Filter to these categories (e.g. `["api", "guide"]`). Valid values: `api`, `guide`, `example`, `eval`, `other`. |
 | `limit` | `int` | `5` | Maximum number of results to return |
 | `max_content_chars` | `int` | `800` | Truncate the `content` field of each result to this many characters |
+| `version` | `str \| None` | `None` | Strictly search this version for `corpus`. Mutually exclusive with `versions` and `all_versions`. |
+| `versions` | `list[str] \| None` | `None` | Strictly search these versions for `corpus`. |
+| `all_versions` | `bool` | `False` | Search every indexed version for `corpus`. Only use for migration/history questions. |
 
 **Returns:** `list[dict]`
 
@@ -230,6 +233,9 @@ Each dict has the following keys:
 | `content` | `str` | Chunk content, truncated to `max_content_chars` |
 | `source_url` | `str` | URL or file path of the source document |
 | `corpus_id` | `str` | Slug of the corpus this chunk belongs to |
+| `source_version` | `str` | Source version label for the searched snapshot |
+| `snapshot_id` | `str` | Immutable snapshot identifier that was searched |
+| `scope` | `dict \| None` | Machine-readable searched/available version metadata when a corpus was scoped |
 | `score` | `float` | RRF score rounded to 4 decimal places (higher = better rank) |
 | `similarity` | `float` | Cosine similarity to the query vector, rounded to 3 decimal places |
 | `category` | `str` | Chunk category: `api`, `guide`, `example`, `eval`, or `other` |
@@ -269,6 +275,7 @@ Each dict has the following keys:
 | `enabled` | `bool` | Whether the corpus is active |
 | `total_chunks` | `int` | Number of indexed chunks |
 | `last_indexed_at` | `str \| None` | ISO timestamp of last successful index run, or `None` |
+| `versions` | `list[dict]` | Available indexed snapshots with `source_version`, `snapshot_id`, and chunk counts |
 
 ---
 
@@ -366,10 +373,11 @@ Browse the persisted document hierarchy for a corpus.
 | `corpus` | `str` | required | Corpus slug to browse |
 | `path` | `str \| None` | `None` | Optional subtree root path |
 | `depth` | `int \| None` | `None` | Optional maximum relative depth below `path` |
+| `version` | `str \| None` | `None` | Version selector. Defaults to the corpus default/latest snapshot. |
 
-**Returns:** `list[dict]`
+**Returns:** `dict`
 
-Each item is a document-tree node with fields such as `doc_path`, `title`, `source_url`, `depth`, `is_group`, `total_chars`, `section_count`, and `children_count`. The list is already in preorder for direct rendering.
+The payload includes `corpus`, `snapshot_id`, and `documents`. Each document-tree node has fields such as `doc_path`, `title`, `source_url`, `depth`, `is_group`, `total_chars`, `section_count`, and `children_count`. The list is already in preorder for direct rendering.
 
 ---
 
@@ -383,9 +391,9 @@ Read a document or one section of a document.
 |---|---|---|---|
 | `corpus` | `str` | required | Corpus slug containing the document |
 | `doc_path` | `str` | required | Document path to read |
-| `section` | `str \| None` | `None` | Optional section-path filter |
+| `version` | `str \| None` | `None` | Version selector. Defaults to the corpus default/latest snapshot. |
 
 **Returns:** `dict`
 
-- Full mode: `mode`, `doc_path`, `title`, `content`, `source_url`, `total_chars`, `section_count`
-- Missing document: `{"error": "Document '<doc_path>' not found in corpus '<corpus>'"}`
+- Full mode: `mode`, `doc_path`, `title`, `content`, `source_url`, `snapshot_id`, `total_chars`, `section_count`
+- Missing document: `{"error": "Document '<doc_path>' not found in corpus '<corpus>' at snapshot '<snapshot_id>'"}`

@@ -19,6 +19,7 @@ from doc_hub._builtins.fetchers.llms_txt import (
 )
 from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
 from doc_hub._builtins.fetchers import jina as _jina
+from doc_hub.versions import utc_now_iso
 
 log = logging.getLogger(__name__)
 
@@ -170,6 +171,9 @@ class SitemapFetcher:
         api_key = _jina.get_api_key()
 
         sitemap_url: str = fetch_config["url"]
+        fetched_at = utc_now_iso()
+        source_version: str = fetch_config.get("source_version", "latest")
+        resolved_version: str | None = fetch_config.get("resolved_version")
         workers: int = int(fetch_config.get("workers", DEFAULT_WORKERS))
         retries: int = int(fetch_config.get("retries", DEFAULT_RETRIES))
         url_prefix: str | None = fetch_config.get("url_prefix")
@@ -247,10 +251,25 @@ class SitemapFetcher:
                 filename_fn=lambda u: html_url_to_filename(u, base_url),
                 workers=workers,
                 retries=retries,
+                fetched_at=fetched_at,
+                source_version=source_version,
+                resolved_version=resolved_version,
             )
 
         # 5b. Write manifest before cleaning so clean_corpus can read it
-        write_manifest(download_results, output_dir, sections=sections)
+        write_manifest(
+            download_results,
+            output_dir,
+            sections=sections,
+            corpus_slug=corpus_slug,
+            fetch_strategy="sitemap",
+            source_type="website",
+            source_url=sitemap_url,
+            source_version=source_version,
+            resolved_version=resolved_version,
+            fetched_at=fetched_at,
+            fetch_config=fetch_config,
+        )
 
         # 5c. LLM cleaning (opt-in via fetch_config["clean"])
         if fetch_config.get("clean") and download_results:

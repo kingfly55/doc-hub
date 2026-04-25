@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import socket
 from pathlib import Path
@@ -10,6 +9,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+
+from doc_hub.versions import snapshot_manifest_from_downloads, utc_now_iso, write_snapshot_manifest
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ class DirectUrlFetcher:
     ) -> Path:
         urls: list[str] = fetch_config.get("urls") or [fetch_config["url"]]
         filenames_override: dict[str, str] = fetch_config.get("filenames", {})
+        fetched_at = utc_now_iso()
+        source_version: str = fetch_config.get("source_version", "latest")
+        resolved_version: str | None = fetch_config.get("resolved_version")
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,6 +84,9 @@ class DirectUrlFetcher:
                             "success": True,
                             "error": None,
                             "content_hash": content_hash,
+                            "fetched_at": fetched_at,
+                            "source_version": source_version,
+                            "resolved_version": resolved_version,
                         }
                     )
                 except (aiohttp.ClientError, OSError) as exc:
@@ -91,21 +98,34 @@ class DirectUrlFetcher:
                             "success": False,
                             "error": str(exc),
                             "content_hash": None,
+                            "fetched_at": fetched_at,
+                            "source_version": source_version,
+                            "resolved_version": resolved_version,
                         }
                     )
 
-        manifest = {
-            "total": len(results),
-            "success": sum(1 for r in results if r["success"]),
-            "failed": sum(1 for r in results if not r["success"]),
-            "files": sorted(results, key=lambda r: r["filename"]),
-        }
-        (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        manifest = snapshot_manifest_from_downloads(
+            corpus_slug=corpus_slug,
+            fetch_strategy="direct_url",
+            source_type="direct_url",
+            source_url=urls[0],
+            source_version=source_version,
+            resolved_version=resolved_version,
+            fetched_at=fetched_at,
+            fetch_config=fetch_config,
+            files=results,
+            raw={
+                "total": len(results),
+                "success": sum(1 for r in results if r["success"]),
+                "failed": sum(1 for r in results if not r["success"]),
+            },
+        )
+        manifest_data = write_snapshot_manifest(manifest, output_dir)
         log.info(
             "[%s] Done: %d/%d downloaded",
             corpus_slug,
-            manifest["success"],
-            manifest["total"],
+            manifest_data["success"],
+            manifest_data["total"],
         )
 
         return output_dir

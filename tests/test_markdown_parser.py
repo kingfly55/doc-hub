@@ -39,8 +39,8 @@ def test_load_manifest_returns_empty_if_missing(tmp_path):
     assert result == {}
 
 
-def test_load_manifest_returns_url_mapping(tmp_path):
-    """_load_manifest maps filename -> url for successful entries."""
+def test_load_manifest_returns_file_metadata(tmp_path):
+    """_load_manifest maps filename to metadata for successful entries."""
     manifest = {
         "total": 2,
         "success": 1,
@@ -52,7 +52,8 @@ def test_load_manifest_returns_url_mapping(tmp_path):
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     result = MarkdownParser._load_manifest(tmp_path)
-    assert result == {"a.md": "https://example.com/a/"}
+    assert list(result) == ["a.md"]
+    assert result["a.md"].url == "https://example.com/a/"
 
 
 def test_load_manifest_ignores_failed_entries(tmp_path):
