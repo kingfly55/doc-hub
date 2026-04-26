@@ -75,6 +75,14 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
                 config["extensions"] = [f".{e}" for e in exts]
             else:
                 config["extensions"] = list(raw)
+        if getattr(args, "path_excludes", None):
+            raw = args.path_excludes
+            if isinstance(raw, str):
+                config["path_excludes"] = [p.strip() for p in raw.split(",") if p.strip()]
+            else:
+                config["path_excludes"] = list(raw)
+        if getattr(args, "path_exclude_pattern", None):
+            config["path_exclude_pattern"] = args.path_exclude_pattern
 
     return config
 
@@ -470,6 +478,8 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--branch", default=None, help="Git branch (git_repo)")
     add_parser.add_argument("--docs-dir", default=None, help="Docs subdirectory in repo (git_repo)")
     add_parser.add_argument("--extensions", default=None, help="Comma-separated file extensions to fetch, e.g. .mdx or .md,.mdx (git_repo, default: .md)")
+    add_parser.add_argument("--path-excludes", default=None, help="Comma-separated repo-relative paths under --docs-dir to skip (git_repo)")
+    add_parser.add_argument("--path-exclude-pattern", default=None, help="Regex matched against repo-relative paths under --docs-dir to skip (git_repo)")
     add_parser.set_defaults(handler=handle_add)
 
     clean_parser = pipeline_subparsers.add_parser(

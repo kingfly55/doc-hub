@@ -280,6 +280,8 @@ doc-hub pipeline add [<name>] [--strategy STRATEGY] [options]
 | `--retries N` | int | 3 | HTTP retry count per URL (llms_txt only). |
 | `--branch BRANCH` | string | none | Git branch to check out (git_repo only). |
 | `--docs-dir DIR` | string | none | Subdirectory containing docs (git_repo only). |
+| `--path-excludes PATHS` | string | none | Comma-separated repo-relative paths under `--docs-dir` to skip, e.g. `i18n/` (git_repo only). |
+| `--path-exclude-pattern PATTERN` | string | none | Regex matched against repo-relative paths under `--docs-dir` to skip (git_repo only). |
 
 ### Examples
 
@@ -301,6 +303,9 @@ doc-hub pipeline add "Deno" --strategy llms_txt --url https://docs.deno.com/llms
 
 # Register a local directory corpus without running the pipeline
 doc-hub pipeline add "My Docs" --strategy local_dir --path ./my-docs --no-index
+
+# Register GitHub docs while excluding multilingual copies
+DOC_HUB_DATABASE_URL=postgresql://... doc-hub pipeline add "OmniRoute" --strategy git_repo --url https://github.com/diegosouzapw/OmniRoute/tree/main/docs --path-excludes i18n/
 ```
 
 ---

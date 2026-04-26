@@ -295,12 +295,14 @@ def test_pipeline_add_parses_git_repo_args():
         "--url", "https://github.com/anthropics/anthropic-sdk-python.git",
         "--branch", "main",
         "--docs-dir", "docs",
+        "--path-excludes", "i18n/",
     ])
 
     assert args.strategy == "git_repo"
     assert args.url == "https://github.com/anthropics/anthropic-sdk-python.git"
     assert args.branch == "main"
     assert args.docs_dir == "docs"
+    assert args.path_excludes == "i18n/"
 
 
 def test_pipeline_add_parses_sitemap_args():
@@ -329,6 +331,9 @@ def test_pipeline_add_builds_config_and_upserts_llms_txt():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"url": "https://ai.pydantic.dev/llms.txt"}
 
@@ -345,6 +350,9 @@ def test_pipeline_add_builds_config_llms_txt_with_optionals():
         retries=5,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {
         "url": "https://ai.pydantic.dev/llms.txt",
@@ -367,6 +375,9 @@ def test_pipeline_add_builds_config_local_dir():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"path": "/tmp/docs"}
 
@@ -383,11 +394,15 @@ def test_pipeline_add_builds_config_git_repo():
         retries=None,
         branch="main",
         docs_dir="docs",
+        extensions=None,
+        path_excludes="i18n/,drafts/",
+        path_exclude_pattern=None,
     ))
     assert config == {
         "url": "https://github.com/org/repo.git",
         "branch": "main",
         "docs_dir": "docs",
+        "path_excludes": ["i18n/", "drafts/"],
     }
 
 
@@ -403,6 +418,9 @@ def test_pipeline_add_builds_config_sitemap():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"url": "https://example.com/sitemap.xml"}
 
@@ -420,6 +438,9 @@ def test_pipeline_add_missing_url_raises():
             retries=None,
             branch=None,
             docs_dir=None,
+            extensions=None,
+            path_excludes=None,
+            path_exclude_pattern=None,
         ))
         assert False, "Expected SystemExit"
     except SystemExit:
@@ -439,6 +460,9 @@ def test_pipeline_add_missing_path_raises():
             retries=None,
             branch=None,
             docs_dir=None,
+            extensions=None,
+            path_excludes=None,
+            path_exclude_pattern=None,
         ))
         assert False, "Expected SystemExit"
     except SystemExit:

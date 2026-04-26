@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
 from doc_hub.versions import snapshot_manifest_from_downloads, utc_now_iso, write_snapshot_manifest
 
 log = logging.getLogger(__name__)
@@ -81,8 +82,12 @@ class GitRepoFetcher:
     Optional fetch_config keys:
         subdir (str):  Subdirectory within the repo to restrict fetching to.
                        Derived automatically from the URL if it contains a tree path.
+        docs_dir (str): Alias for ``subdir`` used by the CLI.
         branch (str):  Branch/tag/SHA to fetch (default: derived from URL or "main").
         extensions (list[str]): File extensions to include (default: [".md"]).
+        path_excludes (list[str]): Repo-relative paths under the selected subdir to skip.
+                                   Trailing ``/`` excludes the directory and descendants.
+        path_exclude_pattern (str): Raw regex matched against subdir-relative paths.
         github_token (str): Personal access token for private repos or higher rate
                             limits. Overrides the GITHUB_TOKEN / GH_TOKEN env vars
                             for this specific corpus.
@@ -99,10 +104,15 @@ class GitRepoFetcher:
         owner, repo, branch = _parse_github_url(url)
 
         # subdir: explicit config wins, then derived from URL tree path
-        subdir: str = fetch_config.get("subdir") or _subdir_from_url(url)
+        subdir: str = fetch_config.get("subdir") or fetch_config.get("docs_dir") or _subdir_from_url(url)
         subdir = subdir.strip("/")
 
         extensions: list[str] = fetch_config.get("extensions", [".md"])
+        exclude_filter = build_exclude_filter(
+            base_url="https://example.invalid/" + (subdir + "/" if subdir else ""),
+            url_excludes=fetch_config.get("path_excludes"),
+            url_exclude_pattern=fetch_config.get("path_exclude_pattern"),
+        )
         # fetch_config token wins (per-repo override), then fall back to env vars
         token: str | None = (
             fetch_config.get("github_token")
@@ -145,6 +155,11 @@ class GitRepoFetcher:
                 if b["path"].startswith(prefix)
                 and any(b["path"].endswith(ext) for ext in extensions)
             ]
+            if exclude_filter is not None:
+                blobs = [
+                    b for b in blobs
+                    if not exclude_filter("https://example.invalid/" + b["path"])
+                ]
 
             log.info(
                 "[%s] GitHub tree: %d total blobs, %d matching %s under %r",
