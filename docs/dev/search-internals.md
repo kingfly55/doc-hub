@@ -32,55 +32,21 @@ Steps:
 
 ## 3. Full SQL Template
 
-`_build_hybrid_sql(corpus, config)` returns the following SQL (parameters interpolated from `SearchConfig`):
+`_build_hybrid_sql(corpora, config)` returns SQL with two candidate CTEs (`vector_results` and `text_results`), an RRF merge, and final pagination. Both CTEs apply the same corpus/category/source/section/snapshot filters. Snapshot filtering uses parameter `$8` with exact `corpus_id:snapshot_id` keys, so strict version searches never fall through to unsearched snapshots.
+
+Key filter and pagination parameters:
 
 ```sql
-WITH vector_results AS (
-    SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line,
-           1 - (embedding <=> $1::vector) AS vec_similarity,
-           ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
-    FROM doc_chunks
-    WHERE ($3::text IS NULL OR corpus_id = $3)
-      AND ($4::text[] IS NULL OR category = ANY($4))
-      AND ($5::text[] IS NULL OR category != ALL($5))
-      AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\')
-      AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\')
-    ORDER BY embedding <=> $1::vector
-    LIMIT {vector_limit}
-),
-text_results AS (
-    SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line,
-           ts_rank(tsv, query) AS text_score,
-           ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, query) DESC) AS text_rank
-    FROM doc_chunks, websearch_to_tsquery('{language}', $2) query
-    WHERE tsv @@ query
-      AND ($3::text IS NULL OR corpus_id = $3)
-      AND ($4::text[] IS NULL OR category = ANY($4))
-      AND ($5::text[] IS NULL OR category != ALL($5))
-      AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\')
-      AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\')
-    ORDER BY ts_rank(tsv, query) DESC
-    LIMIT {text_limit}
-)
-SELECT COALESCE(v.id, t.id) AS id,
-       COALESCE(v.heading, t.heading) AS heading,
-       COALESCE(v.section_path, t.section_path) AS section_path,
-       COALESCE(v.content, t.content) AS content,
-       COALESCE(v.source_url, t.source_url) AS source_url,
-       COALESCE(v.category, t.category) AS category,
-       COALESCE(v.corpus_id, t.corpus_id) AS corpus_id,
-       COALESCE(v.start_line, t.start_line, 0) AS start_line,
-       COALESCE(v.end_line, t.end_line, 0) AS end_line,
-       COALESCE(v.vec_similarity, 0) AS vec_similarity,
-       COALESCE(1.0 / ({rrfk} + v.vec_rank), 0) +
-       COALESCE(1.0 / ({rrfk} + t.text_rank), 0) AS rrf_score
-FROM vector_results v
-FULL OUTER JOIN text_results t ON v.id = t.id
-ORDER BY rrf_score DESC
-LIMIT $8
-OFFSET $9
+WHERE ($3::text[] IS NULL OR corpus_id = ANY($3))
+  AND ($4::text[] IS NULL OR category = ANY($4))
+  AND ($5::text[] IS NULL OR category != ALL($5))
+  AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\')
+  AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\')
+  AND ($8::text[] IS NULL OR corpus_id || ':' || snapshot_id = ANY($8))
+...
+ORDER BY m.rrf_score DESC
+LIMIT $9
+OFFSET $10
 ```
 
 ### Bind parameter reference
@@ -89,13 +55,14 @@ OFFSET $9
 |-------|-------------------|-----------------------------------------------------|
 | `$1`  | `text` (cast to `vector`) | Query embedding vector serialized as `"[f1,f2,...]"` |
 | `$2`  | `text`            | Raw query text for `websearch_to_tsquery`           |
-| `$3`  | `text \| NULL`    | `corpus_id` filter; `NULL` = search all corpora     |
+| `$3`  | `text[] \| NULL`  | `corpus_id` array filter; `NULL` = search all corpora |
 | `$4`  | `text[] \| NULL`  | Category include list (`category = ANY($4)`); `NULL` = no filter |
 | `$5`  | `text[] \| NULL`  | Category exclude list (`category != ALL($5)`); `NULL` = no filter |
 | `$6`  | `text \| NULL`    | `source_url` prefix (pre-escaped); `NULL` = no filter |
 | `$7`  | `text \| NULL`    | `section_path` prefix (pre-escaped); `NULL` = no filter |
-| `$8`  | `int`             | `LIMIT` (result count)                              |
-| `$9`  | `int`             | `OFFSET` (for pagination)                           |
+| `$8`  | `text[] \| NULL`  | Exact snapshot scope as `corpus_id:snapshot_id`; `NULL` = no snapshot filter |
+| `$9`  | `int`             | `LIMIT` (result count)                              |
+| `$10` | `int`             | `OFFSET` (for pagination)                           |
 
 `{vector_limit}`, `{text_limit}`, `{rrfk}`, `{language}` are Python f-string interpolations (not bind params). `language` is validated against `VALID_PG_LANGUAGES` before interpolation. Integer fields are safe because Python `int` cannot contain SQL metacharacters.
 
@@ -162,11 +129,12 @@ The `IS NULL` check MUST come first. PostgreSQL short-circuits `OR`: when `$N` i
 
 | Filter               | Param | SQL condition                                            |
 |----------------------|-------|----------------------------------------------------------|
-| corpus scope         | `$3`  | `$3::text IS NULL OR corpus_id = $3`                     |
+| corpus scope         | `$3`  | `$3::text[] IS NULL OR corpus_id = ANY($3)`              |
 | category include     | `$4`  | `$4::text[] IS NULL OR category = ANY($4)`               |
 | category exclude     | `$5`  | `$5::text[] IS NULL OR category != ALL($5)`              |
 | source URL prefix    | `$6`  | `$6::text IS NULL OR source_url LIKE $6 \|\| '%' ESCAPE '\'` |
 | section path prefix  | `$7`  | `$7::text IS NULL OR section_path LIKE $7 \|\| '%' ESCAPE '\'` |
+| snapshot scope       | `$8`  | `$8::text[] IS NULL OR corpus_id \|\| ':' \|\| snapshot_id = ANY($8)` |
 
 The same filter block is duplicated in both `vector_results` and `text_results` CTEs.
 
@@ -263,7 +231,7 @@ async def search_docs(
     *,
     pool: asyncpg.Pool,
     embedder: Embedder | None = None,
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     categories: list[str] | None = None,
     exclude_categories: list[str] | None = None,
     limit: int = 5,
@@ -271,15 +239,19 @@ async def search_docs(
     min_similarity: float = 0.55,
     source_url_prefix: str | None = None,
     section_path_prefix: str | None = None,
+    snapshot_ids: dict[str, str] | None = None,
+    snapshot_scope_keys: list[str] | None = None,
     config: SearchConfig | None = None,
 ) -> list[SearchResult]:
 ```
 
 - `pool`: Required. Obtain from `doc_hub.db.create_pool()`.
 - `embedder`: Optional. Pass a shared instance (e.g. from MCP lifespan) to avoid re-instantiation on every call. If `None`, resolved from registry.
-- `corpus`: `None` = search all corpora.
+- `corpora`: `None` = search all corpora; otherwise a list of corpus slugs.
 - `categories`: `None` = no filter. Valid values: `"api"`, `"guide"`, `"example"`, `"eval"`, `"other"`.
 - `exclude_categories`: `None` = no filter.
+- `snapshot_ids`: exact one-snapshot-per-corpus scope, e.g. `{ "react": "sha256-..." }`.
+- `snapshot_scope_keys`: exact multi-version scope keys, e.g. `["react:sha256-a", "react:sha256-b"]`.
 - `config`: `None` uses `SearchConfig()` defaults (20/10/60/english).
 
 Returns `[]` if no results meet `min_similarity`.
@@ -292,7 +264,7 @@ Returns `[]` if no results meet `min_similarity`.
 def search_docs_sync(
     query: str,
     *,
-    corpus: str | None = None,
+    corpora: list[str] | None = None,
     categories: list[str] | None = None,
     exclude_categories: list[str] | None = None,
     limit: int = 5,
@@ -300,6 +272,8 @@ def search_docs_sync(
     min_similarity: float = 0.55,
     source_url_prefix: str | None = None,
     section_path_prefix: str | None = None,
+    snapshot_ids: dict[str, str] | None = None,
+    snapshot_scope_keys: list[str] | None = None,
     config: SearchConfig | None = None,
 ) -> list[SearchResult]:
 ```
@@ -322,9 +296,9 @@ search_docs(query, pool, ...)
   ├─ _escape_like(source_url_prefix)      # if provided
   ├─ _escape_like(section_path_prefix)    # if provided
   │
-  ├─ _build_hybrid_sql(corpus, config)    # returns SQL string with interpolated config
+  ├─ _build_hybrid_sql(corpora, config)   # returns SQL string with interpolated config
   │
-  ├─ pool.acquire() → conn.fetch(sql, $1..$9)
+  ├─ pool.acquire() → conn.fetch(sql, $1..$10)
   │    ├─ vector_results CTE  (KNN, LIMIT vector_limit)
   │    ├─ text_results CTE    (BM25, LIMIT text_limit)
   │    └─ FULL OUTER JOIN → RRF score → ORDER BY rrf_score → LIMIT/OFFSET

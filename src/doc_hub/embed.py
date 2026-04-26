@@ -23,7 +23,7 @@ import logging
 import os
 import time as _time
 from collections import deque
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -66,7 +66,10 @@ class EmbeddedChunk:
     char_count: int
     content_hash: str
     category: str
-    embedding: list[float]
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
+    fetched_at: str | None = None
+    embedding: list[float] = field(default_factory=list)
 
     @classmethod
     def from_chunk(cls, chunk: Chunk, embedding: list[float]) -> "EmbeddedChunk":
@@ -83,6 +86,9 @@ class EmbeddedChunk:
             char_count=chunk.char_count,
             content_hash=chunk.content_hash,
             category=chunk.category,
+            snapshot_id=chunk.snapshot_id,
+            source_version=chunk.source_version,
+            fetched_at=chunk.fetched_at,
             embedding=embedding,
         )
 
@@ -309,6 +315,7 @@ async def embed_chunks(
     embedder: "Embedder",
     *,
     batch_size: int = BATCH_SIZE,
+    snapshot_id: str | None = None,
 ) -> list[EmbeddedChunk]:
     """Embed parsed chunks using the provided embedder plugin.
 
@@ -364,8 +371,8 @@ async def embed_chunks(
 
     model = embedder.model_name
     dimensions = embedder.dimensions
-    cache_path = embeddings_cache_path(corpus_slug)
-    output_path = embedded_chunks_path(corpus_slug)
+    cache_path = embeddings_cache_path(corpus_slug, snapshot_id=snapshot_id)
+    output_path = embedded_chunks_path(corpus_slug, snapshot_id=snapshot_id)
 
     total = len(chunks)
     log.info("[%s] Embedding %d chunks (model=%s, dims=%d)", corpus_slug, total, model, dimensions)

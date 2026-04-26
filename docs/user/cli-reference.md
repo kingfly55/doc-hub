@@ -31,7 +31,7 @@ Use this when you want the same concise reference content as `man doc-hub` but y
 
 ## `doc-hub docs list`
 
-List registered corpora.
+List registered corpora, including compact version and alias availability.
 
 ```bash
 doc-hub docs list [options]
@@ -55,6 +55,28 @@ doc-hub docs list --json
 
 ---
 
+## `doc-hub docs versions`
+
+List indexed versions and aliases for a corpus.
+
+```bash
+doc-hub docs versions CORPUS [--json]
+```
+
+Use this before strict version searches when more than one documentation snapshot is available.
+
+### Examples
+
+```bash
+# Show human-readable version aliases and snapshots
+doc-hub docs versions react
+
+# Machine-readable version metadata
+doc-hub docs versions react --json
+```
+
+---
+
 ## `doc-hub docs browse`
 
 Browse the persisted document hierarchy for a corpus.
@@ -67,10 +89,11 @@ doc-hub docs browse CORPUS [options]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `corpus` | string | **required** | Corpus slug to browse. |
+| `corpus` | string | **required** | Corpus slug to browse. May include an inline version as `CORPUS@VERSION`. |
 | `--path PATH` | string | none | Restrict output to this document subtree path. |
 | `--depth N` | int | none | Maximum number of levels to show below the root (or below `--path` if specified). |
-| `--json` | flag | false | Emit raw JSON tree nodes instead of rendered text. |
+| `--version VERSION` | string | default/latest | Version selector to browse. Mutually exclusive with `CORPUS@VERSION`. |
+| `--json` | flag | false | Emit structured JSON with `corpus`, `snapshot_id`, and document tree nodes. |
 
 ### Output
 
@@ -84,6 +107,10 @@ doc-hub docs browse pydantic-ai
 
 # Browse just one subtree
 doc-hub docs browse pydantic-ai --path api
+
+# Browse a specific version
+doc-hub docs browse react --version 18
+doc-hub docs browse react@18
 
 # Limit subtree depth
 doc-hub docs browse pydantic-ai --path api --depth 1
@@ -110,9 +137,10 @@ doc-hub docs read CORPUS DOC_ID [options]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `corpus` | string | **required** | Corpus slug containing the document. |
-| `doc_id` | string | **required** | Short document ID from `doc-hub docs browse` output (e.g. `abc123`). |
-| `--json` | flag | false | Emit the same structured payload shape as the MCP read tool. |
+| `corpus` | string | **required** | Corpus slug containing the document. May include an inline version as `CORPUS@VERSION`. |
+| `doc_id` | string | **required** | Short document ID from `doc-hub docs browse` output (e.g. `abc123`). IDs are snapshot-scoped. |
+| `--version VERSION` | string | default/latest | Version selector to read. Mutually exclusive with `CORPUS@VERSION`. |
+| `--json` | flag | false | Emit the same structured payload shape as the MCP read tool, including `snapshot_id`. |
 
 ### Examples
 
@@ -120,6 +148,10 @@ doc-hub docs read CORPUS DOC_ID [options]
 # Browse to find a document ID, then read it
 doc-hub docs browse pydantic-ai
 doc-hub docs read pydantic-ai abc123
+
+# Read a document from a specific version
+doc-hub docs browse react@18
+doc-hub docs read react@18 abc123
 
 # Machine-readable output
 doc-hub docs read pydantic-ai abc123 --json
@@ -140,7 +172,7 @@ doc-hub docs search --corpus SLUG [--corpus SLUG ...] QUERY [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `query` | string | **required** | Search query (positional). |
-| `--corpus SLUG` | string (repeatable) | **required** | Restrict results to one or more corpus slugs. Repeat the flag to search multiple corpora. |
+| `--corpus SLUG` | string (repeatable) | **required** | Restrict results to one or more corpus slugs. Repeat the flag to search multiple corpora. May include `SLUG@VERSION`. |
 | `--category CATEGORY` | string (repeatable) | no filter | Include only results in this category. Repeatable: `--category api --category guide`. Valid values: `api`, `guide`, `example`, `eval`, `other`. |
 | `--exclude-category CATEGORY` | string (repeatable) | no filter | Exclude results in this category. Repeatable. Same valid values as `--category`. |
 | `--limit N` | int | 5 | Maximum number of results to return. |
@@ -152,13 +184,24 @@ doc-hub docs search --corpus SLUG [--corpus SLUG ...] QUERY [options]
 | `--text-limit N` | int | 10 | BM25 candidate pool size. Advanced tuning. |
 | `--rrfk N` | int | 60 | Reciprocal Rank Fusion k constant. Advanced tuning. |
 | `--language STR` | string | `english` | PostgreSQL text-search language configuration. Advanced tuning. Must be one of the supported values. |
-| `--json` | flag | false | Output results as JSON instead of the default human-readable format. |
+| `--version VERSION` | string | default/latest | Strictly search this version for each requested corpus. Mutually exclusive with inline `SLUG@VERSION`, `--versions`, and `--all-versions`. |
+| `--versions V1,V2` | string | none | Strictly search this comma-separated version set for each requested corpus. |
+| `--all-versions` | flag | false | Search every indexed version for each requested corpus. This is opt-in and can be more expensive/noisy. |
+| `--json` | flag | false | Output results as JSON instead of the default human-readable format. Results include `snapshot_id` and `source_version`. |
 
 ### Examples
 
 ```bash
-# Search one corpus
+# Search one corpus at its default/latest version
 doc-hub docs search --corpus fastapi "how do I add middleware?"
+
+# Strictly search a specific version
+doc-hub docs search --corpus react --version 18 "useEffect cleanup"
+doc-hub docs search --corpus react@18 "useEffect cleanup"
+
+# Explicit cross-version search
+doc-hub docs search --corpus react --versions 18,19 "useEffect cleanup"
+doc-hub docs search --corpus react --all-versions "useEffect cleanup"
 
 # Search multiple corpora
 doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
@@ -237,6 +280,8 @@ doc-hub pipeline add [<name>] [--strategy STRATEGY] [options]
 | `--retries N` | int | 3 | HTTP retry count per URL (llms_txt only). |
 | `--branch BRANCH` | string | none | Git branch to check out (git_repo only). |
 | `--docs-dir DIR` | string | none | Subdirectory containing docs (git_repo only). |
+| `--path-excludes PATHS` | string | none | Comma-separated repo-relative paths under `--docs-dir` to skip, e.g. `i18n/` (git_repo only). |
+| `--path-exclude-pattern PATTERN` | string | none | Regex matched against repo-relative paths under `--docs-dir` to skip (git_repo only). |
 
 ### Examples
 
@@ -258,6 +303,9 @@ doc-hub pipeline add "Deno" --strategy llms_txt --url https://docs.deno.com/llms
 
 # Register a local directory corpus without running the pipeline
 doc-hub pipeline add "My Docs" --strategy local_dir --path ./my-docs --no-index
+
+# Register GitHub docs while excluding multilingual copies
+DOC_HUB_DATABASE_URL=postgresql://... doc-hub pipeline add "OmniRoute" --strategy git_repo --url https://github.com/diegosouzapw/OmniRoute/tree/main/docs --path-excludes i18n/
 ```
 
 ---

@@ -16,6 +16,8 @@ class DocumentNode:
     title: str
     source_url: str = ""
     source_file: str = ""
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
     parent_path: str | None = None
     depth: int = 0
     sort_order: int = 0
@@ -45,12 +47,18 @@ def _doc_id_exists(corpus_slug: str, candidate: str, *, exclude_doc_path: str | 
     return False
 
 
-def _build_doc_id_map(corpus_slug: str, doc_paths: list[str], *, length: int = 6) -> dict[str, str]:
+def _build_doc_id_map(
+    corpus_slug: str,
+    doc_paths: list[str],
+    *,
+    snapshot_id: str = "legacy",
+    length: int = 6,
+) -> dict[str, str]:
     ids_by_path: dict[str, str] = {}
     used_ids: set[str] = set()
 
     for doc_path in sorted(doc_paths):
-        digest = hashlib.sha256(f"{corpus_slug}:{doc_path}".encode()).hexdigest()
+        digest = hashlib.sha256(f"{corpus_slug}:{snapshot_id}:{doc_path}".encode()).hexdigest()
         candidate_length = length
         while True:
             candidate = digest[:candidate_length]
@@ -67,8 +75,14 @@ def _build_doc_id_map(corpus_slug: str, doc_paths: list[str], *, length: int = 6
     return ids_by_path
 
 
-def derive_doc_id(corpus_slug: str, doc_path: str, length: int = 6) -> str:
-    return _build_doc_id_map(corpus_slug, [doc_path], length=length)[doc_path]
+def derive_doc_id(
+    corpus_slug: str,
+    doc_path: str,
+    length: int = 6,
+    *,
+    snapshot_id: str = "legacy",
+) -> str:
+    return _build_doc_id_map(corpus_slug, [doc_path], snapshot_id=snapshot_id, length=length)[doc_path]
 
 
 def _derive_title(source_file: str, chunks_by_file: dict[str, list[Chunk]]) -> str:
@@ -118,6 +132,8 @@ def build_document_tree(
             {
                 "source_file": source_file,
                 "source_url": source_url,
+                "snapshot_id": file_chunks[0].snapshot_id,
+                "source_version": file_chunks[0].source_version,
                 "doc_path": doc_path_from_source_file(source_file),
                 "title": _derive_title(source_file, chunks_by_file),
                 "total_chars": sum(chunk.char_count for chunk in file_chunks),
@@ -210,6 +226,8 @@ def build_document_tree(
                 title=str(file_info["title"]),
                 source_url=str(file_info["source_url"]),
                 source_file=str(file_info["source_file"]),
+                snapshot_id=str(file_info["snapshot_id"]),
+                source_version=str(file_info["source_version"]),
                 parent_path=parent_path,
                 depth=depth,
                 sort_order=sort_order,
@@ -267,17 +285,24 @@ def build_document_tree(
     return nodes
 
 
-async def upsert_documents(pool, corpus_slug: str, nodes: list[DocumentNode]) -> dict[str, int]:
+async def upsert_documents(
+    pool,
+    corpus_slug: str,
+    nodes: list[DocumentNode],
+    *,
+    snapshot_id: str = "legacy",
+    source_version: str = "latest",
+) -> dict[str, int]:
     path_to_id: dict[str, int] = {}
     if not nodes:
         return path_to_id
 
     insert_sql = """
     INSERT INTO doc_documents (
-        corpus_id, doc_path, title, source_url, source_file, parent_id,
-        depth, sort_order, is_group, total_chars, section_count
-    ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10)
-    ON CONFLICT (corpus_id, doc_path) DO UPDATE SET
+        corpus_id, snapshot_id, source_version, doc_path, title, source_url,
+        source_file, parent_id, depth, sort_order, is_group, total_chars, section_count
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12)
+    ON CONFLICT (corpus_id, snapshot_id, doc_path) DO UPDATE SET
         title = EXCLUDED.title,
         source_url = EXCLUDED.source_url,
         source_file = EXCLUDED.source_file,
@@ -292,7 +317,7 @@ async def upsert_documents(pool, corpus_slug: str, nodes: list[DocumentNode]) ->
     update_sql = """
     UPDATE doc_documents
     SET parent_id = $1
-    WHERE corpus_id = $2 AND doc_path = $3
+    WHERE corpus_id = $2 AND snapshot_id = $3 AND doc_path = $4
     """
 
     async with pool.acquire() as conn:
@@ -300,6 +325,8 @@ async def upsert_documents(pool, corpus_slug: str, nodes: list[DocumentNode]) ->
             row = await conn.fetchrow(
                 insert_sql,
                 corpus_slug,
+                snapshot_id if snapshot_id != "legacy" else node.snapshot_id,
+                source_version if source_version != "latest" else node.source_version,
                 node.doc_path,
                 node.title,
                 node.source_url,
@@ -314,32 +341,39 @@ async def upsert_documents(pool, corpus_slug: str, nodes: list[DocumentNode]) ->
 
         for node in nodes:
             parent_id = path_to_id.get(node.parent_path) if node.parent_path else None
-            await conn.execute(update_sql, parent_id, corpus_slug, node.doc_path)
+            node_snapshot_id = snapshot_id if snapshot_id != "legacy" else node.snapshot_id
+            await conn.execute(update_sql, parent_id, corpus_slug, node_snapshot_id, node.doc_path)
 
     return path_to_id
 
 
-async def link_chunks_to_documents(pool, corpus_slug: str, path_to_id: dict[str, int]) -> int:
+async def link_chunks_to_documents(
+    pool,
+    corpus_slug: str,
+    path_to_id: dict[str, int],
+    *,
+    snapshot_id: str = "legacy",
+) -> int:
     del path_to_id
     docs_sql = """
     SELECT source_file, id
     FROM doc_documents
-    WHERE corpus_id = $1 AND source_file <> ''
+    WHERE corpus_id = $1 AND snapshot_id = $2 AND source_file <> ''
     """
     chunks_sql = """
     SELECT DISTINCT source_file
     FROM doc_chunks
-    WHERE corpus_id = $1 AND source_file <> ''
+    WHERE corpus_id = $1 AND snapshot_id = $2 AND source_file <> ''
     """
     update_sql = """
     UPDATE doc_chunks
     SET document_id = $1
-    WHERE corpus_id = $2 AND source_file = $3
+    WHERE corpus_id = $2 AND snapshot_id = $3 AND source_file = $4
     """
 
-    doc_rows = await pool.fetch(docs_sql, corpus_slug)
+    doc_rows = await pool.fetch(docs_sql, corpus_slug, snapshot_id)
     source_file_to_id = {str(row["source_file"]): int(row["id"]) for row in doc_rows}
-    chunk_rows = await pool.fetch(chunks_sql, corpus_slug)
+    chunk_rows = await pool.fetch(chunks_sql, corpus_slug, snapshot_id)
 
     updated = 0
     for row in chunk_rows:
@@ -347,25 +381,39 @@ async def link_chunks_to_documents(pool, corpus_slug: str, path_to_id: dict[str,
         doc_id = source_file_to_id.get(source_file)
         if doc_id is None:
             continue
-        status = await pool.execute(update_sql, doc_id, corpus_slug, source_file)
+        status = await pool.execute(update_sql, doc_id, corpus_slug, snapshot_id, source_file)
         updated += _parse_command_count(status)
     return updated
 
 
-async def delete_stale_documents(pool, corpus_slug: str, current_paths: list[str]) -> int:
+async def delete_stale_documents(
+    pool,
+    corpus_slug: str,
+    current_paths: list[str],
+    *,
+    snapshot_id: str = "legacy",
+) -> int:
     sql = """
     DELETE FROM doc_documents
     WHERE corpus_id = $1
-      AND (cardinality($2::text[]) = 0 OR NOT (doc_path = ANY($2::text[])))
+      AND snapshot_id = $2
+      AND (cardinality($3::text[]) = 0 OR NOT (doc_path = ANY($3::text[])))
     """
-    status = await pool.execute(sql, corpus_slug, current_paths)
+    status = await pool.execute(sql, corpus_slug, snapshot_id, current_paths)
     return _parse_command_count(status)
 
 
-async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max_depth: int | None = None) -> list[dict]:
-    conditions = ["corpus_id = $1"]
-    args: list[object] = [corpus_slug]
-    next_index = 2
+async def get_document_tree(
+    pool,
+    corpus_slug: str,
+    path: str | None = None,
+    max_depth: int | None = None,
+    *,
+    snapshot_id: str = "legacy",
+) -> list[dict]:
+    conditions = ["corpus_id = $1", "snapshot_id = $2"]
+    args: list[object] = [corpus_slug, snapshot_id]
+    next_index = 3
     root_depth = 0
 
     if path is not None:
@@ -387,17 +435,18 @@ async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max
     rows = await pool.fetch(sql, *args)
     if not rows:
         has_documents = await pool.fetchrow(
-            "SELECT 1 AS present FROM doc_documents WHERE corpus_id = $1 LIMIT 1",
+            "SELECT 1 AS present FROM doc_documents WHERE corpus_id = $1 AND snapshot_id = $2 LIMIT 1",
             corpus_slug,
+            snapshot_id,
         )
         if has_documents:
             return []
-        return await _synthetic_tree_fallback(pool, corpus_slug)
+        return await _synthetic_tree_fallback(pool, corpus_slug, snapshot_id=snapshot_id)
 
     row_dicts = [dict(row) for row in rows]
     path_set = {str(row["doc_path"]) for row in row_dicts}
     concrete_doc_paths = [str(row["doc_path"]) for row in row_dicts if not bool(row["is_group"])]
-    doc_ids_by_path = _build_doc_id_map(corpus_slug, concrete_doc_paths)
+    doc_ids_by_path = _build_doc_id_map(corpus_slug, concrete_doc_paths, snapshot_id=snapshot_id)
     child_counts = {doc_path: 0 for doc_path in path_set}
     for doc_path in path_set:
         parent_path, _ = _node_parent_path_and_depth(doc_path)
@@ -420,7 +469,7 @@ async def get_document_tree(pool, corpus_slug: str, path: str | None = None, max
     ]
 
 
-async def _synthetic_tree_fallback(pool, corpus_slug: str) -> list[dict]:
+async def _synthetic_tree_fallback(pool, corpus_slug: str, *, snapshot_id: str = "legacy") -> list[dict]:
     sql = """
     SELECT
         source_file,
@@ -428,14 +477,14 @@ async def _synthetic_tree_fallback(pool, corpus_slug: str) -> list[dict]:
         COALESCE(SUM(char_count), 0) AS total_chars,
         COUNT(*) AS section_count
     FROM doc_chunks
-    WHERE corpus_id = $1 AND source_file <> ''
+    WHERE corpus_id = $1 AND snapshot_id = $2 AND source_file <> ''
     GROUP BY source_file
     ORDER BY source_file
     """
-    rows = await pool.fetch(sql, corpus_slug)
+    rows = await pool.fetch(sql, corpus_slug, snapshot_id)
     result = []
     doc_paths = [doc_path_from_source_file(str(row["source_file"])) for row in rows]
-    doc_ids_by_path = _build_doc_id_map(corpus_slug, doc_paths)
+    doc_ids_by_path = _build_doc_id_map(corpus_slug, doc_paths, snapshot_id=snapshot_id)
     for row in rows:
         source_file = str(row["source_file"])
         doc_path = doc_path_from_source_file(source_file)
@@ -466,7 +515,11 @@ def _source_file_from_doc_path(doc_path: str) -> str:
 
 
 async def get_document_chunks_by_doc_id(
-    pool, corpus_slug: str, doc_id: str
+    pool,
+    corpus_slug: str,
+    doc_id: str,
+    *,
+    snapshot_id: str = "legacy",
 ) -> tuple[str | None, list[dict]]:
     """Return (doc_path, chunks) for the document identified by *doc_id*.
 
@@ -475,14 +528,19 @@ async def get_document_chunks_by_doc_id(
     integer FK.  Returns (None, []) if the doc_id is not found.
     """
     rows = await pool.fetch(
-        "SELECT id, doc_path FROM doc_documents WHERE corpus_id = $1 AND is_group = false",
+        """
+        SELECT id, doc_path
+        FROM doc_documents
+        WHERE corpus_id = $1 AND snapshot_id = $2 AND is_group = false
+        """,
         corpus_slug,
+        snapshot_id,
     )
     if not rows:
         return None, []
 
     doc_paths = [str(r["doc_path"]) for r in rows]
-    id_map = _build_doc_id_map(corpus_slug, doc_paths)
+    id_map = _build_doc_id_map(corpus_slug, doc_paths, snapshot_id=snapshot_id)
 
     matched_path = next((path for path, did in id_map.items() if did == doc_id), None)
     if matched_path is None:
@@ -505,27 +563,33 @@ async def get_document_chunks_by_doc_id(
         c.end_line,
         c.category
     FROM doc_chunks c
-    WHERE c.corpus_id = $1 AND c.document_id = $2
+    WHERE c.corpus_id = $1 AND c.snapshot_id = $3 AND c.document_id = $2
     ORDER BY c.start_line
     """
-    chunk_rows = await pool.fetch(sql, corpus_slug, document_id)
+    chunk_rows = await pool.fetch(sql, corpus_slug, document_id, snapshot_id)
     return matched_path, [dict(r) for r in chunk_rows]
 
 
-async def get_document_chunks(pool, corpus_slug: str, doc_path: str) -> list[dict]:
+async def get_document_chunks(
+    pool,
+    corpus_slug: str,
+    doc_path: str,
+    *,
+    snapshot_id: str = "legacy",
+) -> list[dict]:
     doc_sql = """
     SELECT id, source_file
     FROM doc_documents
-    WHERE corpus_id = $1 AND doc_path = $2
+    WHERE corpus_id = $1 AND snapshot_id = $2 AND doc_path = $3
     """
-    doc_row = await pool.fetchrow(doc_sql, corpus_slug, doc_path)
+    doc_row = await pool.fetchrow(doc_sql, corpus_slug, snapshot_id, doc_path)
 
     if doc_row is not None:
-        filter_clause = "c.document_id = $2"
-        args: list[object] = [corpus_slug, int(doc_row["id"])]
+        filter_clause = "c.document_id = $3"
+        args: list[object] = [corpus_slug, snapshot_id, int(doc_row["id"])]
     else:
-        filter_clause = "c.source_file = $2"
-        args = [corpus_slug, _source_file_from_doc_path(doc_path)]
+        filter_clause = "c.source_file = $3"
+        args = [corpus_slug, snapshot_id, _source_file_from_doc_path(doc_path)]
 
     sql = f"""
     SELECT
@@ -541,7 +605,7 @@ async def get_document_chunks(pool, corpus_slug: str, doc_path: str) -> list[dic
         c.end_line,
         c.category
     FROM doc_chunks c
-    WHERE c.corpus_id = $1 AND {filter_clause}
+    WHERE c.corpus_id = $1 AND c.snapshot_id = $2 AND {filter_clause}
     ORDER BY c.start_line
     """
     rows = await pool.fetch(sql, *args)

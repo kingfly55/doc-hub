@@ -32,7 +32,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import]
 from dotenv import load_dotenv
@@ -105,7 +105,9 @@ class SearchResult:
     start_line: int     # 1-indexed line number in source file
     end_line: int       # 1-indexed last line number (inclusive)
     source_file: str    # original source file path (e.g. "guide__install.md")
-    doc_path: str       # resolved doc_path from doc_documents (for correct doc_id)
+    doc_path: str = ""  # resolved doc_path from doc_documents (for correct doc_id)
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +188,9 @@ def _build_hybrid_sql(
     - $5 -- exclude_categories array (list[str] | None)
     - $6 -- source_url_prefix (str | None, pre-escaped)
     - $7 -- section_path_prefix (str | None, pre-escaped)
-    - $8 -- limit
-    - $9 -- offset
+    - $8 -- snapshot scope keys (list[str] | None, values are corpus_id:snapshot_id)
+    - $9 -- limit
+    - $10 -- offset
 
     Security: language is interpolated via f-string but validated against a
     whitelist in SearchConfig.__post_init__() to prevent SQL injection.
@@ -202,7 +205,7 @@ def _build_hybrid_sql(
     return f"""
 WITH vector_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line, source_file, document_id,
+           start_line, end_line, source_file, document_id, snapshot_id, source_version,
            1 - (embedding <=> $1::vector) AS vec_similarity,
            ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
     FROM doc_chunks
@@ -211,12 +214,13 @@ WITH vector_results AS (
       AND ($5::text[] IS NULL OR category != ALL($5))
       AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\\')
       AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\\')
+      AND ($8::text[] IS NULL OR corpus_id || ':' || snapshot_id = ANY($8))
     ORDER BY embedding <=> $1::vector
     LIMIT {cfg.vector_limit}
 ),
 text_results AS (
     SELECT id, heading, section_path, content, source_url, category, corpus_id,
-           start_line, end_line, source_file, document_id,
+           start_line, end_line, source_file, document_id, snapshot_id, source_version,
            ts_rank(tsv, query) AS text_score,
            ROW_NUMBER() OVER (ORDER BY ts_rank(tsv, query) DESC) AS text_rank
     FROM doc_chunks, websearch_to_tsquery('{cfg.language}', $2) query
@@ -226,6 +230,7 @@ text_results AS (
       AND ($5::text[] IS NULL OR category != ALL($5))
       AND ($6::text IS NULL OR source_url LIKE $6 || '%' ESCAPE '\\')
       AND ($7::text IS NULL OR section_path LIKE $7 || '%' ESCAPE '\\')
+      AND ($8::text[] IS NULL OR corpus_id || ':' || snapshot_id = ANY($8))
     ORDER BY ts_rank(tsv, query) DESC
     LIMIT {cfg.text_limit}
 ),
@@ -241,6 +246,8 @@ merged AS (
            COALESCE(v.end_line, t.end_line, 0) AS end_line,
            COALESCE(v.source_file, t.source_file) AS source_file,
            COALESCE(v.document_id, t.document_id) AS document_id,
+           COALESCE(v.snapshot_id, t.snapshot_id) AS snapshot_id,
+           COALESCE(v.source_version, t.source_version) AS source_version,
            COALESCE(v.vec_similarity, 0) AS vec_similarity,
            COALESCE(1.0 / ({cfg.rrfk} + v.vec_rank), 0) +
            COALESCE(1.0 / ({cfg.rrfk} + t.text_rank), 0) AS rrf_score
@@ -252,8 +259,8 @@ SELECT m.*,
 FROM merged m
 LEFT JOIN doc_documents d ON m.document_id = d.id
 ORDER BY m.rrf_score DESC
-LIMIT $8
-OFFSET $9
+LIMIT $9
+OFFSET $10
 """
 
 
@@ -275,6 +282,8 @@ async def search_docs(
     min_similarity: float = 0.55,
     source_url_prefix: str | None = None,
     section_path_prefix: str | None = None,
+    snapshot_ids: dict[str, str] | None = None,
+    snapshot_scope_keys: list[str] | None = None,
     config: SearchConfig | None = None,
 ) -> list[SearchResult]:
     """Hybrid vector + full-text search across doc_chunks.
@@ -298,6 +307,8 @@ async def search_docs(
             for results that appear only in text_results (vec_similarity=0).
         source_url_prefix: Restrict results to source URLs starting with this string.
         section_path_prefix: Restrict results to section paths starting with this string.
+        snapshot_ids: Optional mapping of corpus slug to exact snapshot ID to search.
+        snapshot_scope_keys: Optional exact corpus:snapshot scope keys for multi-version search.
         config: Optional ``SearchConfig`` for advanced SQL tuning (vector_limit,
             text_limit, rrfk, language). Defaults to SearchConfig() which uses
             the same values as before (20/10/60/english).
@@ -316,12 +327,16 @@ async def search_docs(
     if section_path_prefix is not None:
         section_path_prefix = _escape_like(section_path_prefix)
 
+    snapshot_scope = snapshot_scope_keys
+    if snapshot_scope is None and snapshot_ids:
+        snapshot_scope = [f"{corpus}:{snapshot}" for corpus, snapshot in sorted(snapshot_ids.items())]
+
     log.debug(
         "Running hybrid search: query=%r, corpora=%r, categories=%r, "
         "exclude_categories=%r, limit=%d, offset=%d, min_similarity=%.2f, "
-        "source_url_prefix=%r, section_path_prefix=%r",
+        "source_url_prefix=%r, section_path_prefix=%r, snapshot_scope=%r",
         query, corpora, categories, exclude_categories, limit, offset,
-        min_similarity, source_url_prefix, section_path_prefix,
+        min_similarity, source_url_prefix, section_path_prefix, snapshot_scope,
     )
 
     sql = _build_hybrid_sql(corpora=corpora, config=config)
@@ -337,8 +352,9 @@ async def search_docs(
             exclude_categories,  # $5 — category exclude array or None
             source_url_prefix,   # $6 — source URL prefix (pre-escaped) or None
             section_path_prefix, # $7 — section path prefix (pre-escaped) or None
-            limit,               # $8 — result count limit
-            offset,              # $9 — offset for pagination
+            snapshot_scope,      # $8 — corpus:snapshot scope values or None
+            limit,               # $9 — result count limit
+            offset,              # $10 — offset for pagination
         )
 
     log.debug("Raw results before similarity filter: %d", len(rows))
@@ -363,6 +379,8 @@ async def search_docs(
             end_line=int(row["end_line"]),
             source_file=row["source_file"],
             doc_path=row["doc_path"],
+            snapshot_id=row["snapshot_id"],
+            source_version=row["source_version"],
         )
         for row in rows
     ]
@@ -375,6 +393,112 @@ async def search_docs(
 
     log.debug("Returning %d results after similarity filter", len(results))
     return results
+
+
+# ---------------------------------------------------------------------------
+# Version scope helpers
+# ---------------------------------------------------------------------------
+
+
+def _split_corpus_selector(selector: str) -> tuple[str, str | None]:
+    corpus, sep, version = selector.partition("@")
+    return corpus, version if sep else None
+
+
+async def resolve_search_scope(
+    pool: asyncpg.Pool,
+    corpora: list[str],
+    version: str | None = None,
+    versions: list[str] | None = None,
+    all_versions: bool = False,
+) -> dict[str, Any]:
+    from doc_hub.db import get_default_snapshot_id, list_doc_versions, resolve_version_selector
+
+    requested: list[dict[str, str]] = []
+    snapshot_ids: dict[str, str] = {}
+    snapshot_scope_keys: list[str] = []
+    available_versions: dict[str, list[str]] = {}
+    aliases: dict[str, dict[str, str]] = {}
+
+    parsed = [_split_corpus_selector(corpus) for corpus in corpora]
+    explicit_modes = sum(bool(mode) for mode in [version, versions, all_versions])
+    if explicit_modes > 1:
+        raise ValueError("Specify only one of --version, --versions, or --all-versions")
+
+    for corpus, inline_version in parsed:
+        if inline_version is not None and explicit_modes:
+            raise ValueError("Specify versions either with corpus@version or version flags, not both")
+
+    for corpus, inline_version in parsed:
+        rows = await list_doc_versions(pool, corpus)
+        requested_versions: list[str | None]
+        if all_versions:
+            requested_versions = [str(row["source_version"]) for row in rows]
+        elif versions:
+            requested_versions = versions
+        else:
+            requested_versions = [inline_version or version]
+
+        if not requested_versions:
+            requested_versions = [None]
+
+        selected_snapshots: list[tuple[str | None, str, str]] = []
+        for requested_version in requested_versions:
+            if requested_version is None:
+                snapshot_id = await get_default_snapshot_id(pool, corpus)
+                selected_by = "default"
+            else:
+                resolved = await resolve_version_selector(pool, corpus, requested_version)
+                if resolved is None:
+                    known = sorted({str(row["source_version"]) for row in rows} | {str(row["snapshot_id"]) for row in rows})
+                    raise ValueError(
+                        f"Version {requested_version!r} not found for corpus {corpus!r}. "
+                        f"Available versions: {', '.join(known) if known else '(none)'}"
+                    )
+                snapshot_id = resolved
+                selected_by = "explicit"
+            selected_snapshots.append((requested_version, snapshot_id, selected_by))
+
+        alias_map: dict[str, str] = {}
+        versions: list[str] = []
+        for row in rows:
+            source_version = str(row["source_version"])
+            if source_version not in versions:
+                versions.append(source_version)
+            try:
+                row_aliases = row["aliases"]
+            except (KeyError, TypeError):
+                row_aliases = None
+            if row_aliases:
+                for alias in row_aliases:
+                    alias_map[str(alias)] = str(row["source_version"])
+
+        available_versions[corpus] = versions
+        aliases[corpus] = alias_map
+        if selected_snapshots:
+            snapshot_ids[corpus] = selected_snapshots[0][1]
+        seen_scope_for_corpus: set[str] = set()
+        for requested_version, snapshot_id, selected_by in selected_snapshots:
+            scope_key = f"{corpus}:{snapshot_id}"
+            if scope_key not in seen_scope_for_corpus:
+                snapshot_scope_keys.append(scope_key)
+                seen_scope_for_corpus.add(scope_key)
+            requested.append({
+                "corpus": corpus,
+                "requested": requested_version or "latest",
+                "snapshot_id": snapshot_id,
+                "selected_by": selected_by,
+            })
+
+    normalized_corpora = [corpus for corpus, _ in parsed]
+    return {
+        "corpora": normalized_corpora,
+        "snapshot_ids": snapshot_ids,
+        "snapshot_scope_keys": snapshot_scope_keys,
+        "searched_versions": requested,
+        "available_versions": available_versions,
+        "aliases": aliases,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +518,9 @@ async def _search_docs_with_pool(
     source_url_prefix: str | None = None,
     section_path_prefix: str | None = None,
     embedder: "Embedder | None" = None,
+    version: str | None = None,
+    versions: list[str] | None = None,
+    all_versions: bool = False,
     config: SearchConfig | None = None,
 ) -> list[SearchResult]:
     """Create a pool, run search_docs(), close pool, and return results."""
@@ -401,9 +528,15 @@ async def _search_docs_with_pool(
 
     pool = await create_pool()
     try:
+        snapshot_ids = None
+        snapshot_scope_keys = None
         if corpora:
             from doc_hub.corpora import validate_corpora_available
 
+            scope = await resolve_search_scope(pool, corpora, version=version, versions=versions, all_versions=all_versions)
+            corpora = scope["corpora"]
+            snapshot_ids = scope["snapshot_ids"]
+            snapshot_scope_keys = scope["snapshot_scope_keys"]
             await validate_corpora_available(pool, corpora)
         return await search_docs(
             query,
@@ -417,6 +550,8 @@ async def _search_docs_with_pool(
             min_similarity=min_similarity,
             source_url_prefix=source_url_prefix,
             section_path_prefix=section_path_prefix,
+            snapshot_ids=snapshot_ids,
+            snapshot_scope_keys=snapshot_scope_keys,
             config=config,
         )
     finally:
@@ -434,6 +569,9 @@ def search_docs_sync(
     min_similarity: float = 0.55,
     source_url_prefix: str | None = None,
     section_path_prefix: str | None = None,
+    version: str | None = None,
+    versions: list[str] | None = None,
+    all_versions: bool = False,
     config: SearchConfig | None = None,
 ) -> list[SearchResult]:
     """Synchronous wrapper around search_docs for use in non-async contexts.
@@ -458,6 +596,9 @@ def search_docs_sync(
             min_similarity=min_similarity,
             source_url_prefix=source_url_prefix,
             section_path_prefix=section_path_prefix,
+            version=version,
+            versions=versions,
+            all_versions=all_versions,
             config=config,
         )
     )
@@ -552,6 +693,21 @@ def build_search_parser(parser: argparse.ArgumentParser | None = None) -> argpar
         help="PostgreSQL text-search language (default: english). Advanced tuning.",
     )
     parser.add_argument(
+        "--version",
+        default=None,
+        help="Version selector to search for every requested corpus.",
+    )
+    parser.add_argument(
+        "--versions",
+        default=None,
+        help="Comma-separated version selectors to search explicitly.",
+    )
+    parser.add_argument(
+        "--all-versions",
+        action="store_true",
+        help="Search every indexed version for the requested corpora.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output results as JSON",
@@ -574,6 +730,10 @@ def handle_search_args(args: argparse.Namespace) -> None:
             language=args.language if args.language is not None else "english",
         )
 
+    version_list = None
+    if args.versions:
+        version_list = [version.strip() for version in args.versions.split(",") if version.strip()]
+
     try:
         results = search_docs_sync(
             args.query,
@@ -585,6 +745,9 @@ def handle_search_args(args: argparse.Namespace) -> None:
             min_similarity=args.min_similarity,
             source_url_prefix=args.source_url_prefix,
             section_path_prefix=args.section_path_prefix,
+            version=args.version,
+            versions=version_list,
+            all_versions=args.all_versions,
             config=config,
         )
     except ValueError as exc:
@@ -613,6 +776,8 @@ def handle_search_args(args: argparse.Namespace) -> None:
                         "heading": r.heading,
                         "section_path": r.section_path,
                         "source_url": r.source_url,
+                        "snapshot_id": r.snapshot_id,
+                        "source_version": r.source_version,
                         "score": r.score,
                         "similarity": r.similarity,
                         "category": r.category,
@@ -645,6 +810,7 @@ def handle_search_args(args: argparse.Namespace) -> None:
         print(f"    Chunk ID:   {r.id}")
         print(f"    Doc ID:     {doc_id}")
         print(f"    Corpus:     {r.corpus_id}")
+        print(f"    Version:    {r.source_version} ({r.snapshot_id})")
         print(f"    Path:       {r.section_path[:60]}")
         print(f"    Category:   {r.category}")
         print(f"    Lines:      {r.start_line}-{r.end_line}")

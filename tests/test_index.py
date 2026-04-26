@@ -20,17 +20,15 @@ Pool/Connection mocks.  Tests verify:
 
 from __future__ import annotations
 
+import datetime
 import json
-import os
 from dataclasses import asdict
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from doc_hub.embed import EmbeddedChunk
 from doc_hub.index import (
-    BATCH_SIZE,
     IndexResult,
     _parse_command_count,
     _write_meta,
@@ -59,6 +57,8 @@ def _make_embedded_chunk(
     heading: str = "Test Heading",
     content: str = "Test content here.",
     embedding: list[float] | None = None,
+    snapshot_id: str = "legacy",
+    source_version: str = "latest",
 ) -> EmbeddedChunk:
     if embedding is None:
         embedding = [0.1] * 768
@@ -74,6 +74,9 @@ def _make_embedded_chunk(
         char_count=len(content),
         content_hash=content_hash,
         category="guide",
+        snapshot_id=snapshot_id,
+        source_version=source_version,
+        fetched_at="2026-04-24T12:00:00Z",
         embedding=embedding,
     )
 
@@ -199,6 +202,31 @@ async def test_upsert_chunks_counts_inserts(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_upsert_chunks_converts_iso_fetched_at_to_datetime():
+    corpus = _make_corpus()
+    chunk = _make_embedded_chunk()
+    pool, conn = _make_mock_pool()
+    captured_fetch_calls = []
+
+    async def capture_fetch(sql, *args):
+        captured_fetch_calls.append(args)
+        return [{"is_insert": True}]
+
+    conn.fetch = capture_fetch
+    conn.execute = AsyncMock(return_value="SELECT 1")
+    pool.fetchval = AsyncMock(return_value=1)
+
+    with (
+        patch("doc_hub.index.update_corpus_stats", new=AsyncMock()),
+        patch("doc_hub.index._write_meta", new=AsyncMock()),
+    ):
+        await upsert_chunks(pool, corpus, [chunk])
+
+    fetched_at_arg = captured_fetch_calls[0][8]
+    assert fetched_at_arg == datetime.datetime(2026, 4, 24, 12, 0, tzinfo=datetime.UTC)
+
+
+@pytest.mark.asyncio
 async def test_upsert_chunks_counts_updates(tmp_path):
     """upsert_chunks increments updated when xmax != 0 (existing row updated)."""
     corpus = _make_corpus()
@@ -285,8 +313,8 @@ async def test_upsert_chunks_full_mode_deletes_stale():
 
 
 @pytest.mark.asyncio
-async def test_upsert_chunks_full_mode_scopes_delete_by_corpus():
-    """full=True DELETE statement includes corpus_id = $1 (not cross-corpus)."""
+async def test_upsert_chunks_full_mode_scopes_delete_by_corpus_and_snapshot():
+    """full=True DELETE statement includes corpus_id and snapshot_id scoping."""
     corpus = _make_corpus(slug="corpus-a")
     chunk = _make_embedded_chunk()
     pool, conn = _make_mock_pool()
@@ -310,10 +338,10 @@ async def test_upsert_chunks_full_mode_scopes_delete_by_corpus():
 
     assert len(delete_sqls) == 1
     delete_sql, delete_args = delete_sqls[0]
-    # Must scope by corpus_id
     assert "corpus_id" in delete_sql
-    # First positional arg to DELETE must be the corpus slug
+    assert "snapshot_id" in delete_sql
     assert delete_args[0] == "corpus-a"
+    assert delete_args[1] == chunk.snapshot_id
 
 
 @pytest.mark.asyncio
@@ -407,8 +435,8 @@ async def test_upsert_chunks_formats_embedding_as_vector_string():
 
     assert len(captured_fetch_calls) == 1
     _, args = captured_fetch_calls[0]
-    # The 13th positional arg (index 12) should be the embedding string
-    emb_arg = args[12]
+    # The last positional arg should be the embedding string
+    emb_arg = args[-1]
     assert emb_arg.startswith("[")
     assert emb_arg.endswith("]")
     # Verify the values are present
@@ -672,7 +700,15 @@ async def test_run_pipeline_threads_embedded_chunks_to_index():
 
     captured_index_kwargs = {}
 
-    async def mock_run_index(corp, *, full_reindex=False, embedded_chunks=None, pool=None, embedder=None):
+    async def mock_run_index(
+        corp,
+        *,
+        full_reindex=False,
+        embedded_chunks=None,
+        pool=None,
+        embedder=None,
+        snapshot_id=None,
+    ):
         captured_index_kwargs["embedded_chunks"] = embedded_chunks
 
     with (

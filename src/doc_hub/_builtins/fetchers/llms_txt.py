@@ -16,6 +16,7 @@ import aiohttp
 from doc_hub._builtins.fetchers.jina import DownloadResult  # noqa: F401
 from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
 from doc_hub._builtins.fetchers import jina as _jina
+from doc_hub.versions import snapshot_manifest_from_downloads, utc_now_iso, write_snapshot_manifest
 
 log = logging.getLogger(__name__)
 
@@ -95,28 +96,40 @@ def write_manifest(
     results: list[DownloadResult],
     output_dir: Path,
     sections: list[dict[str, Any]] | None = None,
+    *,
+    corpus_slug: str = "",
+    fetch_strategy: str = "llms_txt",
+    source_type: str = "website",
+    source_url: str = "",
+    source_version: str = "latest",
+    resolved_version: str | None = None,
+    fetched_at: str | None = None,
+    fetch_config: dict[str, Any] | None = None,
+    aliases: list[str] | None = None,
+    raw: dict[str, Any] | None = None,
 ) -> None:
-    """Write a JSON manifest of download results to ``output_dir/manifest.json``."""
-    manifest = {
+    """Write a versioned JSON manifest of download results."""
+    legacy_counts = {
         "total": len(results),
         "success": sum(1 for r in results if r.success),
         "failed": sum(1 for r in results if not r.success),
-        "files": [
-            {
-                "url": r.url,
-                "filename": r.filename,
-                "success": r.success,
-                "error": r.error,
-                "content_hash": r.content_hash,
-            }
-            for r in sorted(results, key=lambda r: r.filename)
-        ],
     }
-    if sections is not None:
-        manifest["sections"] = sections
-    manifest_path = output_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2))
-    log.info("Manifest written to %s", manifest_path)
+    manifest = snapshot_manifest_from_downloads(
+        corpus_slug=corpus_slug,
+        fetch_strategy=fetch_strategy,
+        source_type=source_type,
+        source_url=source_url,
+        source_version=source_version,
+        resolved_version=resolved_version,
+        fetched_at=fetched_at,
+        fetch_config=fetch_config,
+        aliases=aliases,
+        files=results,
+        sections=sections,
+        raw=legacy_counts | (raw or {}),
+    )
+    write_snapshot_manifest(manifest, output_dir)
+    log.info("Manifest written to %s", output_dir / "manifest.json")
 
 
 # ---------------------------------------------------------------------------
@@ -272,16 +285,38 @@ async def _resolve_one(
     direct_session: aiohttp.ClientSession,
     jina_session: aiohttp.ClientSession | None,
     retries: int,
+    fetched_at: str | None = None,
+    source_version: str | None = None,
+    resolved_version: str | None = None,
 ) -> DownloadResult:
     if url.endswith(".md") or strategy == "direct":
-        return await _download_one(direct_session, url, filename, output_dir, retries)
+        result = await _download_one(direct_session, url, filename, output_dir, retries)
+        return result._replace(
+            fetched_at=fetched_at,
+            source_version=source_version,
+            resolved_version=resolved_version,
+        )
 
     if strategy == "jina":
-        return await _jina.fetch_one(jina_session, url, filename, output_dir, retries)
+        return await _jina.fetch_one(
+            jina_session,
+            url,
+            filename,
+            output_dir,
+            retries,
+            fetched_at=fetched_at,
+            source_version=source_version,
+            resolved_version=resolved_version,
+        )
 
     # strategy == "try_md"
     if url.endswith(".md"):
-        return await _download_one(direct_session, url, filename, output_dir, retries)
+        result = await _download_one(direct_session, url, filename, output_dir, retries)
+        return result._replace(
+            fetched_at=fetched_at,
+            source_version=source_version,
+            resolved_version=resolved_version,
+        )
 
     md_url = url.rstrip("/") + ".md"
     content = await _fetch_bytes_if_exists(direct_session, md_url)
@@ -289,10 +324,27 @@ async def _resolve_one(
         outpath = output_dir / filename
         outpath.write_bytes(content)
         content_hash = hashlib.sha256(content).hexdigest()
-        return DownloadResult(url=url, filename=filename, success=True, content_hash=content_hash)
+        return DownloadResult(
+            url=url,
+            filename=filename,
+            success=True,
+            content_hash=content_hash,
+            fetched_at=fetched_at,
+            source_version=source_version,
+            resolved_version=resolved_version,
+        )
 
     log.debug("try_md: %s → falling back to Jina", url)
-    return await _jina.fetch_one(jina_session, url, filename, output_dir, retries)
+    return await _jina.fetch_one(
+        jina_session,
+        url,
+        filename,
+        output_dir,
+        retries,
+        fetched_at=fetched_at,
+        source_version=source_version,
+        resolved_version=resolved_version,
+    )
 
 
 async def _resolve_all(
@@ -303,6 +355,9 @@ async def _resolve_all(
     workers: int,
     retries: int,
     jina_api_key: str | None,
+    fetched_at: str | None = None,
+    source_version: str | None = None,
+    resolved_version: str | None = None,
 ) -> list[DownloadResult]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -334,6 +389,9 @@ async def _resolve_all(
                 return await _resolve_one(
                     url, filename, output_dir, strategy,
                     direct_session, jina_session, retries,
+                    fetched_at=fetched_at,
+                    source_version=source_version,
+                    resolved_version=resolved_version,
                 )
 
         tasks = [asyncio.create_task(bounded(url)) for url in urls]
@@ -397,6 +455,9 @@ class LlmsTxtFetcher:
             ``output_dir`` — the directory containing the downloaded ``.md`` files.
         """
         llms_txt_url: str = fetch_config["url"]
+        fetched_at = utc_now_iso()
+        source_version: str = fetch_config.get("source_version", "latest")
+        resolved_version: str | None = fetch_config.get("resolved_version")
         base_url: str = fetch_config.get("base_url") or await _derive_base_url(llms_txt_url)
         url_suffix: str = fetch_config.get("url_suffix", "")
         non_md_strategy: str = fetch_config.get("non_md_strategy", "direct")
@@ -480,7 +541,16 @@ class LlmsTxtFetcher:
         download_results: list[DownloadResult] = []
         if unique_urls:
             download_results = await _resolve_all(
-                unique_urls, base_url, output_dir, non_md_strategy, workers, retries, jina_api_key
+                unique_urls,
+                base_url,
+                output_dir,
+                non_md_strategy,
+                workers,
+                retries,
+                jina_api_key,
+                fetched_at=fetched_at,
+                source_version=source_version,
+                resolved_version=resolved_version,
             )
 
         # 6. Compare content hashes against manifest to classify changes
@@ -498,7 +568,6 @@ class LlmsTxtFetcher:
             else:
                 unchanged_count += 1
 
-        ok = sum(1 for r in download_results if r.success)
         fail = sum(1 for r in download_results if not r.success)
         log.info(
             "[%s] Sync complete: %d new, %d changed, %d unchanged, %d failed, %d removed",
@@ -511,7 +580,19 @@ class LlmsTxtFetcher:
         )
 
         # 7. Write updated manifest with content hashes
-        write_manifest(download_results, output_dir, sections=sections)
+        write_manifest(
+            download_results,
+            output_dir,
+            sections=sections,
+            corpus_slug=corpus_slug,
+            fetch_strategy="llms_txt",
+            source_type="llms_txt",
+            source_url=llms_txt_url,
+            source_version=source_version,
+            resolved_version=resolved_version,
+            fetched_at=fetched_at,
+            fetch_config=fetch_config,
+        )
 
         if fetch_config.get("clean") and download_results:
             from doc_hub.clean import DEFAULT_CLEAN_WORKERS, clean_corpus  # noqa: PLC0415

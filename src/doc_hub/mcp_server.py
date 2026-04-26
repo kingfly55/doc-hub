@@ -70,7 +70,7 @@ from doc_hub.db import create_pool, ensure_schema
 from doc_hub.documents import derive_doc_id, doc_path_from_source_file
 from doc_hub.models import Corpus
 from doc_hub.pipeline import run_pipeline
-from doc_hub.search import search_docs
+from doc_hub.search import resolve_search_scope, search_docs
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +140,9 @@ async def search_docs_tool(
     categories: list[str] | None = None,
     limit: int = 5,
     max_content_chars: int = 800,
+    version: str | None = None,
+    versions: list[str] | None = None,
+    all_versions: bool = False,
 ) -> list[dict]:
     """Search indexed documentation. Searches all corpora by default,
     or a specific corpus if specified.
@@ -158,6 +161,9 @@ async def search_docs_tool(
         categories=categories,
         limit=limit,
         max_content_chars=max_content_chars,
+        version=version,
+        versions=versions,
+        all_versions=all_versions,
         pool=state.pool,
     )
 
@@ -169,6 +175,9 @@ async def _search_tool_impl(
     categories: list[str] | None,
     limit: int,
     max_content_chars: int,
+    version: str | None = None,
+    versions: list[str] | None = None,
+    all_versions: bool = False,
     pool: asyncpg.Pool,
 ) -> list[dict]:
     """Core search logic, callable directly in tests without MCP framework.
@@ -191,12 +200,24 @@ async def _search_tool_impl(
         List of result dicts with keys: heading, section_path, content,
         source_url, corpus_id, doc_id, score, similarity, category.
     """
+    corpora = [corpus] if corpus else None
+    snapshot_ids = None
+    snapshot_scope_keys = None
+    scope = None
+    if corpora:
+        scope = await resolve_search_scope(pool, corpora, version=version, versions=versions, all_versions=all_versions)
+        corpora = scope["corpora"]
+        snapshot_ids = scope["snapshot_ids"]
+        snapshot_scope_keys = scope["snapshot_scope_keys"]
+
     results = await search_docs(
         query,
         pool=pool,
-        corpus=corpus,
+        corpora=corpora,
         categories=categories,
         limit=limit,
+        snapshot_ids=snapshot_ids,
+        snapshot_scope_keys=snapshot_scope_keys,
     )
     return [
         {
@@ -205,12 +226,19 @@ async def _search_tool_impl(
             "content": r.content[:max_content_chars],
             "source_url": r.source_url,
             "corpus_id": r.corpus_id,
-            "doc_id": derive_doc_id(r.corpus_id, r.doc_path or doc_path_from_source_file(r.source_file)),
+            "source_version": r.source_version,
+            "snapshot_id": r.snapshot_id,
+            "doc_id": derive_doc_id(
+                r.corpus_id,
+                r.doc_path or doc_path_from_source_file(r.source_file),
+                snapshot_id=r.snapshot_id,
+            ),
             "score": round(r.score, 4),
             "similarity": round(r.similarity, 3),
             "category": r.category,
             "start_line": r.start_line,
             "end_line": r.end_line,
+            "scope": scope,
         }
         for r in results
     ]
@@ -239,17 +267,26 @@ async def _list_corpora_impl(*, pool: asyncpg.Pool) -> list[dict]:
         total_chunks, last_indexed_at.
     """
     corpora = await db.list_corpora(pool, enabled_only=False)
-    return [
-        {
+    output = []
+    for c in corpora:
+        version_rows = await db.list_doc_versions(pool, c.slug, enabled_only=False)
+        output.append({
             "slug": c.slug,
             "name": c.name,
             "strategy": c.fetch_strategy,
             "enabled": c.enabled,
             "total_chunks": c.total_chunks,
             "last_indexed_at": c.last_indexed_at,
-        }
-        for c in corpora
-    ]
+            "versions": [
+                {
+                    "source_version": str(row["source_version"]),
+                    "snapshot_id": str(row["snapshot_id"]),
+                    "total_chunks": int(row["total_chunks"] or 0),
+                }
+                for row in version_rows
+            ],
+        })
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -438,10 +475,11 @@ async def browse_corpus_tool(
     ctx: Context,
     path: str | None = None,
     depth: int | None = None,
-) -> list[dict]:
+    version: str | None = None,
+) -> dict:
     """Browse the document tree for a corpus."""
     state: AppState = ctx.request_context.lifespan_context
-    return await _browse_corpus_impl(corpus=corpus, path=path, depth=depth, pool=state.pool)
+    return await _browse_corpus_impl(corpus=corpus, path=path, depth=depth, version=version, pool=state.pool)
 
 
 async def _browse_corpus_impl(
@@ -449,12 +487,18 @@ async def _browse_corpus_impl(
     corpus: str,
     path: str | None,
     depth: int | None,
+    version: str | None = None,
     pool: asyncpg.Pool,
-) -> list[dict]:
+) -> dict:
     """Core browse-corpus logic."""
+    from doc_hub.db import get_default_snapshot_id, resolve_version_selector  # noqa: PLC0415
     from doc_hub.documents import get_document_tree  # noqa: PLC0415
 
-    return await get_document_tree(pool, corpus, path=path, max_depth=depth)
+    snapshot_id = await get_default_snapshot_id(pool, corpus) if version is None else await resolve_version_selector(pool, corpus, version)
+    if snapshot_id is None:
+        return {"error": f"Version '{version}' not found in corpus '{corpus}'"}
+    documents = await get_document_tree(pool, corpus, path=path, max_depth=depth, snapshot_id=snapshot_id)
+    return {"corpus": corpus, "snapshot_id": snapshot_id, "documents": documents}
 
 
 # ---------------------------------------------------------------------------
@@ -467,12 +511,14 @@ async def get_document_tool(
     corpus: str,
     doc_path: str,
     ctx: Context,
+    version: str | None = None,
 ) -> dict:
     """Get a document from a corpus by its doc_path."""
     state: AppState = ctx.request_context.lifespan_context
     return await _get_document_impl(
         corpus=corpus,
         doc_path=doc_path,
+        version=version,
         pool=state.pool,
     )
 
@@ -481,14 +527,19 @@ async def _get_document_impl(
     *,
     corpus: str,
     doc_path: str,
+    version: str | None = None,
     pool: asyncpg.Pool,
 ) -> dict:
     """Core get-document logic."""
+    from doc_hub.db import get_default_snapshot_id, resolve_version_selector  # noqa: PLC0415
     from doc_hub.documents import get_document_chunks  # noqa: PLC0415
 
-    chunks = await get_document_chunks(pool, corpus, doc_path)
+    snapshot_id = await get_default_snapshot_id(pool, corpus) if version is None else await resolve_version_selector(pool, corpus, version)
+    if snapshot_id is None:
+        return {"error": f"Version '{version}' not found in corpus '{corpus}'"}
+    chunks = await get_document_chunks(pool, corpus, doc_path, snapshot_id=snapshot_id)
     if not chunks:
-        return {"error": f"Document '{doc_path}' not found in corpus '{corpus}'"}
+        return {"error": f"Document '{doc_path}' not found in corpus '{corpus}' at snapshot '{snapshot_id}'"}
 
     total_chars = sum(int(chunk.get("char_count", 0)) for chunk in chunks)
     section_count = len(chunks)
@@ -504,6 +555,7 @@ async def _get_document_impl(
         "title": title,
         "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
         "source_url": source_url,
+        "snapshot_id": snapshot_id,
         "total_chars": total_chars,
         "section_count": section_count,
     }

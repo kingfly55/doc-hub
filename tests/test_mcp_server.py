@@ -67,6 +67,8 @@ def _make_search_result(
     similarity: float = 0.87654,
     category: str = "guide",
     source_file: str = "guide__test.md",
+    snapshot_id: str = "legacy",
+    source_version: str = "latest",
 ):
     """Build a fake SearchResult-like object."""
     from doc_hub.search import SearchResult
@@ -83,12 +85,17 @@ def _make_search_result(
         start_line=1,
         end_line=10,
         source_file=source_file,
+        snapshot_id=snapshot_id,
+        source_version=source_version,
     )
 
 
 def _make_mock_pool() -> MagicMock:
     """Build a mock asyncpg Pool."""
-    return MagicMock()
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value=None)
+    pool.fetch = AsyncMock(return_value=[])
+    return pool
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +209,8 @@ class TestSearchToolImpl:
         assert "score" in r
         assert "similarity" in r
         assert "category" in r
+        assert "source_version" in r
+        assert "snapshot_id" in r
 
     @pytest.mark.asyncio
     async def test_corpus_id_in_results(self):
@@ -239,7 +248,7 @@ class TestSearchToolImpl:
                 pool=pool,
             )
 
-        expected_doc_id = derive_doc_id("pydantic-ai", doc_path_from_source_file("guide__install.md"))
+        expected_doc_id = derive_doc_id("pydantic-ai", doc_path_from_source_file("guide__install.md"), snapshot_id="legacy")
         assert output[0]["doc_id"] == expected_doc_id
         assert len(output[0]["doc_id"]) == 6
 
@@ -351,7 +360,7 @@ class TestSearchToolImpl:
             )
 
         call_kwargs = mock_search.call_args.kwargs
-        assert call_kwargs["corpus"] == "pydantic-ai"
+        assert call_kwargs["corpora"] == ["pydantic-ai"]
 
     @pytest.mark.asyncio
     async def test_passes_categories_filter_to_search_docs(self):
@@ -389,7 +398,7 @@ class TestSearchToolImpl:
             )
 
         call_kwargs = mock_search.call_args.kwargs
-        assert call_kwargs["corpus"] is None
+        assert call_kwargs["corpora"] is None
 
     @pytest.mark.asyncio
     async def test_multiple_results_all_included(self):
@@ -430,7 +439,9 @@ class TestListCorporaImpl:
         """Returns [] when no corpora are registered."""
         pool = _make_mock_pool()
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=[])):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=[])), patch(
+            "doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])
+        ):
             output = await _list_corpora_impl(pool=pool)
 
         assert output == []
@@ -444,7 +455,7 @@ class TestListCorporaImpl:
             _make_corpus(slug="fastapi", enabled=False),
         ]
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)), patch("doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])):
             output = await _list_corpora_impl(pool=pool)
 
         assert len(output) == 2
@@ -467,7 +478,7 @@ class TestListCorporaImpl:
         pool = _make_mock_pool()
         corpora = [_make_corpus()]
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)), patch("doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])):
             output = await _list_corpora_impl(pool=pool)
 
         r = output[0]
@@ -484,7 +495,7 @@ class TestListCorporaImpl:
         pool = _make_mock_pool()
         corpora = [_make_corpus(strategy="llms_txt")]
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)), patch("doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])):
             output = await _list_corpora_impl(pool=pool)
 
         assert output[0]["strategy"] == "llms_txt"
@@ -497,7 +508,7 @@ class TestListCorporaImpl:
         disabled_corpus = _make_corpus(slug="disabled-corpus", enabled=False)
         corpora = [disabled_corpus]
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)), patch("doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])):
             output = await _list_corpora_impl(pool=pool)
 
         assert len(output) == 1
@@ -511,7 +522,7 @@ class TestListCorporaImpl:
         corpus = _make_corpus(total_chunks=999, last_indexed_at="2024-06-15T12:00:00+00:00")
         corpora = [corpus]
 
-        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)):
+        with patch("doc_hub.mcp_server.db.list_corpora", new=AsyncMock(return_value=corpora)), patch("doc_hub.mcp_server.db.list_doc_versions", new=AsyncMock(return_value=[])):
             output = await _list_corpora_impl(pool=pool)
 
         assert output[0]["total_chunks"] == 999
@@ -1028,9 +1039,10 @@ class TestBrowseCorpusImpl:
         with patch("doc_hub.documents.get_document_tree", new=AsyncMock(return_value=tree)):
             result = await _browse_corpus_impl(corpus="pydantic-ai", path=None, depth=None, pool=pool)
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], dict)
+        assert result["corpus"] == "pydantic-ai"
+        assert result["snapshot_id"] == "legacy"
+        assert len(result["documents"]) == 1
+        assert isinstance(result["documents"][0], dict)
 
     @pytest.mark.asyncio
     async def test_passes_path_filter(self):
@@ -1041,7 +1053,7 @@ class TestBrowseCorpusImpl:
         with patch("doc_hub.documents.get_document_tree", new=mock_tree):
             await _browse_corpus_impl(corpus="pydantic-ai", path="guide", depth=None, pool=pool)
 
-        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path="guide", max_depth=None)
+        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path="guide", max_depth=None, snapshot_id="legacy")
 
     @pytest.mark.asyncio
     async def test_passes_depth_filter(self):
@@ -1052,7 +1064,7 @@ class TestBrowseCorpusImpl:
         with patch("doc_hub.documents.get_document_tree", new=mock_tree):
             await _browse_corpus_impl(corpus="pydantic-ai", path=None, depth=2, pool=pool)
 
-        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path=None, max_depth=2)
+        mock_tree.assert_awaited_once_with(pool, "pydantic-ai", path=None, max_depth=2, snapshot_id="legacy")
 
     @pytest.mark.asyncio
     async def test_returns_empty_for_unknown_corpus(self):
@@ -1062,7 +1074,7 @@ class TestBrowseCorpusImpl:
         with patch("doc_hub.documents.get_document_tree", new=AsyncMock(return_value=[])):
             result = await _browse_corpus_impl(corpus="missing", path=None, depth=None, pool=pool)
 
-        assert result == []
+        assert result == {"corpus": "missing", "snapshot_id": "legacy", "documents": []}
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1137,7 @@ class TestGetDocumentImpl:
                 pool=pool,
             )
 
-        assert result == {"error": "Document 'missing/doc' not found in corpus 'pydantic-ai'"}
+        assert result == {"error": "Document 'missing/doc' not found in corpus 'pydantic-ai' at snapshot 'legacy'"}
 
     @pytest.mark.asyncio
     async def test_content_is_concatenated_chunks(self):

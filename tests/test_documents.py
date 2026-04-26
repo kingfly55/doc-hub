@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -48,6 +48,9 @@ def _make_chunk(
         char_count=len(content),
         content_hash=hashlib.sha256(content.encode()).hexdigest(),
         category="other",
+        snapshot_id="legacy",
+        source_version="latest",
+        fetched_at="2026-04-24T12:00:00Z",
     )
 
 
@@ -415,7 +418,9 @@ async def test_upsert_documents_calls_insert():
     insert_sql, *insert_args = conn.fetchrow.call_args.args
     assert "INSERT INTO doc_documents" in insert_sql
     assert insert_args[0] == "test-corpus"
-    assert insert_args[1] == "guide"
+    assert insert_args[1] == "legacy"
+    assert insert_args[2] == "latest"
+    assert insert_args[3] == "guide"
 
 
 @pytest.mark.asyncio
@@ -433,7 +438,8 @@ async def test_upsert_documents_sets_parent_id():
     parent_update_args = conn.execute.call_args_list[1].args
     assert parent_update_args[1] == 1
     assert parent_update_args[2] == "test-corpus"
-    assert parent_update_args[3] == "guides/install"
+    assert parent_update_args[3] == "legacy"
+    assert parent_update_args[4] == "guides/install"
 
 
 @pytest.mark.asyncio
@@ -446,7 +452,8 @@ async def test_upsert_documents_clears_root_parent_id():
 
     update_args = conn.execute.call_args.args
     assert update_args[1] is None
-    assert update_args[3] == "root"
+    assert update_args[3] == "legacy"
+    assert update_args[4] == "root"
 
 
 @pytest.mark.asyncio
@@ -490,9 +497,10 @@ async def test_link_chunks_to_documents_uses_source_file_exact_match():
 
     await link_chunks_to_documents(pool, "test-corpus", {})
 
-    _, doc_id, corpus_slug, source_file = pool.execute.call_args.args
+    _, doc_id, corpus_slug, snapshot_id, source_file = pool.execute.call_args.args
     assert doc_id == 1
     assert corpus_slug == "test-corpus"
+    assert snapshot_id == "legacy"
     assert source_file == "guide.md"
 
 
@@ -504,9 +512,10 @@ async def test_delete_stale_documents_deletes():
     result = await delete_stale_documents(pool, "test-corpus", ["keep/me"])
 
     assert result == 3
-    sql, corpus_slug, paths = pool.execute.call_args.args
-    assert "NOT (doc_path = ANY($2::text[]))" in sql
+    sql, corpus_slug, snapshot_id, paths = pool.execute.call_args.args
+    assert "NOT (doc_path = ANY($3::text[]))" in sql
     assert corpus_slug == "test-corpus"
+    assert snapshot_id == "legacy"
     assert paths == ["keep/me"]
 
 
@@ -518,7 +527,8 @@ async def test_delete_stale_documents_deletes_all_when_empty():
     result = await delete_stale_documents(pool, "test-corpus", [])
 
     assert result == 5
-    assert pool.execute.call_args.args[2] == []
+    assert pool.execute.call_args.args[2] == "legacy"
+    assert pool.execute.call_args.args[3] == []
 
 
 @pytest.mark.asyncio
@@ -563,7 +573,7 @@ async def test_get_document_tree_falls_back_only_when_no_documents_exist():
         result = await get_document_tree(pool, "test-corpus")
 
     assert result == [{"doc_path": "guide"}]
-    fallback.assert_awaited_once_with(pool, "test-corpus")
+    fallback.assert_awaited_once_with(pool, "test-corpus", snapshot_id="legacy")
 
 
 @pytest.mark.asyncio
@@ -578,8 +588,8 @@ async def test_get_document_tree_returns_empty_for_missing_subtree_when_document
     assert result == []
     fallback.assert_not_awaited()
     sql, *args = pool.fetch.call_args_list[0].args
-    assert "doc_path = $2 OR doc_path LIKE $2 || '/%'" in sql
-    assert args[1] == "guides"
+    assert "doc_path = $3 OR doc_path LIKE $3 || '/%'" in sql
+    assert args[2] == "guides"
 
 
 @pytest.mark.asyncio
@@ -605,8 +615,8 @@ async def test_get_document_tree_with_path_filter():
         await get_document_tree(pool, "test-corpus", path="guides")
 
     sql, *args = pool.fetch.call_args_list[0].args
-    assert "doc_path = $2 OR doc_path LIKE $2 || '/%'" in sql
-    assert args[1] == "guides"
+    assert "doc_path = $3 OR doc_path LIKE $3 || '/%'" in sql
+    assert args[2] == "guides"
 
 
 @pytest.mark.asyncio
@@ -620,8 +630,8 @@ async def test_get_document_tree_with_depth_filter_relative():
 
     sql, *args = pool.fetch.call_args.args
     # root_depth for "guides" (0 slashes) is 0, so absolute cutoff = 0 + 2 = 2
-    assert "depth <= $3" in sql
-    assert args[2] == 2
+    assert "depth <= $4" in sql
+    assert args[3] == 2
 
 
 @pytest.mark.asyncio

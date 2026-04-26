@@ -32,6 +32,7 @@ import json
 import logging
 import shutil
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
@@ -39,6 +40,7 @@ from dotenv import load_dotenv
 from doc_hub.fetchers import DEFAULT_RETRIES, DEFAULT_WORKERS, fetch
 from doc_hub.models import Corpus
 from doc_hub.paths import corpus_dir, raw_dir, chunks_dir
+from doc_hub.versions import SnapshotManifest, load_snapshot_manifest
 
 if TYPE_CHECKING:
     import asyncpg
@@ -52,6 +54,31 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _materialize_snapshot_raw(
+    corpus: Corpus,
+    source_dir: Path,
+    manifest: SnapshotManifest,
+) -> None:
+    if not manifest.snapshot_id:
+        return
+
+    target_dir = raw_dir(corpus, snapshot_id=manifest.snapshot_id)
+    if source_dir == target_dir:
+        return
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for filename in manifest.files:
+        source_file = source_dir / filename
+        if source_file.exists():
+            target_file = target_dir / filename
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, target_file)
+
+    manifest_file = source_dir / "manifest.json"
+    if manifest_file.exists():
+        shutil.copy2(manifest_file, target_dir / "manifest.json")
+
+
 async def run_fetch(
     corpus: Corpus,
     *,
@@ -59,7 +86,8 @@ async def run_fetch(
     retry_failed: bool = False,
     workers: int = DEFAULT_WORKERS,
     retries: int = DEFAULT_RETRIES,
-) -> None:
+    snapshot_id: str | None = None,
+) -> str | None:
     """Fetch docs for a corpus into the corpus raw directory.
 
     Args:
@@ -77,9 +105,12 @@ async def run_fetch(
     """
     if skip_download:
         log.info("[%s] Skipping fetch (--skip-download)", corpus.slug)
-        return
+        source_dir = raw_dir(corpus, snapshot_id=snapshot_id)
+        manifest = load_snapshot_manifest(source_dir)
+        _materialize_snapshot_raw(corpus, source_dir, manifest)
+        return manifest.snapshot_id or snapshot_id
 
-    output = raw_dir(corpus)
+    output = raw_dir(corpus, snapshot_id=snapshot_id)
 
     # Inject CLI overrides into fetch_config so fetchers can honour them
     # without mutating the original corpus object.
@@ -90,8 +121,12 @@ async def run_fetch(
         overridden_config["retries"] = retries
 
     log.info("[%s] === STEP 1: Fetch ===", corpus.slug)
-    await fetch(corpus.slug, corpus.fetch_strategy, overridden_config, output)
-    log.info("[%s] Fetch complete → %s", corpus.slug, output)
+    fetched_dir = await fetch(corpus.slug, corpus.fetch_strategy, overridden_config, output)
+    manifest = load_snapshot_manifest(fetched_dir)
+    _materialize_snapshot_raw(corpus, fetched_dir, manifest)
+    resolved_snapshot_id = manifest.snapshot_id or snapshot_id
+    log.info("[%s] Fetch complete → %s", corpus.slug, fetched_dir)
+    return resolved_snapshot_id
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +134,7 @@ async def run_fetch(
 # ---------------------------------------------------------------------------
 
 
-async def run_clean(corpus: Corpus) -> None:
+async def run_clean(corpus: Corpus, *, snapshot_id: str | None = None) -> None:
     """Clean fetched markdown files via LLM if the corpus has clean=true.
 
     Checks ``corpus.fetch_config["clean"]``. If falsy, skips silently.
@@ -115,7 +150,7 @@ async def run_clean(corpus: Corpus) -> None:
 
     from doc_hub.clean import clean_corpus  # noqa: PLC0415
 
-    output = raw_dir(corpus)
+    output = raw_dir(corpus, snapshot_id=snapshot_id)
     if not output.exists():
         log.warning("[%s] No raw directory found — skipping clean", corpus.slug)
         return
@@ -132,7 +167,7 @@ async def run_clean(corpus: Corpus) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run_parse(corpus: Corpus) -> list:
+async def run_parse(corpus: Corpus, *, snapshot_id: str | None = None) -> list:
     """Parse downloaded markdown files into chunks.
 
     Reads raw files from raw_dir(corpus), splits by headings (via the
@@ -148,18 +183,25 @@ async def run_parse(corpus: Corpus) -> list:
     from doc_hub.parse import parse_docs  # noqa: PLC0415
 
     log.info("[%s] === STEP 2: Parse (parser=%s) ===", corpus.slug, corpus.parser)
-    raw_path = raw_dir(corpus)
+    raw_path = raw_dir(corpus, snapshot_id=snapshot_id)
     base_url = corpus.fetch_config.get("base_url", "")
     chunks = parse_docs(
         corpus.slug, raw_path,
         parser_name=corpus.parser,
         base_url=base_url,
+        snapshot_id=snapshot_id,
     )
     log.info("[%s] Parse complete → %d chunks", corpus.slug, len(chunks))
     return chunks
 
 
-async def run_embed(corpus: Corpus, chunks: list | None = None, *, embedder=None) -> list:
+async def run_embed(
+    corpus: Corpus,
+    chunks: list | None = None,
+    *,
+    embedder=None,
+    snapshot_id: str | None = None,
+) -> list:
     """Embed chunks via the corpus's configured embedder plugin.
 
     Loads chunks from chunks_dir(corpus)/chunks.jsonl if not provided.
@@ -184,7 +226,7 @@ async def run_embed(corpus: Corpus, chunks: list | None = None, *, embedder=None
 
     # If chunks not provided, load from JSONL
     if chunks is None:
-        chunks_path = chunks_dir(corpus) / "chunks.jsonl"
+        chunks_path = chunks_dir(corpus, snapshot_id=snapshot_id) / "chunks.jsonl"
         if not chunks_path.exists():
             raise FileNotFoundError(
                 f"chunks.jsonl not found at {chunks_path}. "
@@ -204,7 +246,7 @@ async def run_embed(corpus: Corpus, chunks: list | None = None, *, embedder=None
         from doc_hub.discovery import get_registry  # noqa: PLC0415
         embedder = get_registry().get_embedder(corpus.embedder)
 
-    embedded = await embed_chunks(corpus.slug, chunks, embedder)
+    embedded = await embed_chunks(corpus.slug, chunks, embedder, snapshot_id=snapshot_id)
     log.info("[%s] Embed complete → %d embedded chunks", corpus.slug, len(embedded))
     return embedded
 
@@ -216,6 +258,7 @@ async def run_index(
     embedded_chunks: list | None = None,
     pool: asyncpg.Pool | None = None,
     embedder=None,
+    snapshot_id: str | None = None,
 ) -> IndexResult:
     """Upsert embedded chunks into PostgreSQL.
 
@@ -249,7 +292,7 @@ async def run_index(
     # Load embedded chunks if not provided                               #
     # ------------------------------------------------------------------ #
     if embedded_chunks is None:
-        ec_path = chunks_dir(corpus) / "embedded_chunks.jsonl"
+        ec_path = chunks_dir(corpus, snapshot_id=snapshot_id) / "embedded_chunks.jsonl"
         if not ec_path.exists():
             raise FileNotFoundError(
                 f"embedded_chunks.jsonl not found at {ec_path}. "
@@ -314,6 +357,7 @@ async def run_build_tree(
     corpus: Corpus,
     *,
     pool: asyncpg.Pool | None = None,
+    snapshot_id: str | None = None,
 ) -> dict[str, int]:
     """Build and persist the document hierarchy tree for a corpus."""
     from doc_hub.db import create_pool, ensure_schema  # noqa: PLC0415
@@ -326,7 +370,7 @@ async def run_build_tree(
     from doc_hub.parse import Chunk  # noqa: PLC0415
 
     zero_result = {"documents": 0, "linked_chunks": 0, "deleted": 0}
-    chunks_path = chunks_dir(corpus) / "chunks.jsonl"
+    chunks_path = chunks_dir(corpus, snapshot_id=snapshot_id) / "chunks.jsonl"
     if not chunks_path.exists():
         return zero_result
 
@@ -338,7 +382,7 @@ async def run_build_tree(
                 chunks.append(Chunk(**json.loads(line)))
 
     manifest_sections: list[dict] | None = None
-    manifest_path = raw_dir(corpus) / "manifest.json"
+    manifest_path = raw_dir(corpus, snapshot_id=snapshot_id) / "manifest.json"
     if manifest_path.exists():
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest_sections = manifest_data.get("sections")
@@ -353,12 +397,28 @@ async def run_build_tree(
 
     try:
         await ensure_schema(pool)
-        path_to_id = await upsert_documents(pool, corpus.slug, tree)
-        linked_chunks = await link_chunks_to_documents(pool, corpus.slug, path_to_id)
+        first_snapshot = getattr(tree[0], "snapshot_id", "legacy") if tree else "legacy"
+        first_source_version = getattr(tree[0], "source_version", "latest") if tree else "latest"
+        resolved_snapshot_id = snapshot_id or (first_snapshot if isinstance(first_snapshot, str) else "legacy")
+        source_version = first_source_version if isinstance(first_source_version, str) else "latest"
+        path_to_id = await upsert_documents(
+            pool,
+            corpus.slug,
+            tree,
+            snapshot_id=resolved_snapshot_id,
+            source_version=source_version,
+        )
+        linked_chunks = await link_chunks_to_documents(
+            pool,
+            corpus.slug,
+            path_to_id,
+            snapshot_id=resolved_snapshot_id,
+        )
         deleted = await delete_stale_documents(
             pool,
             corpus.slug,
             [node.doc_path for node in tree],
+            snapshot_id=resolved_snapshot_id,
         )
         return {
             "documents": len(path_to_id),
@@ -428,27 +488,30 @@ async def run_pipeline(
     # ------------------------------------------------------------------ #
     # Stage dispatch                                                       #
     # ------------------------------------------------------------------ #
+    snapshot_id: str | None = None
     if stage == "fetch" or stage is None:
-        await run_fetch(
+        fetched_snapshot_id = await run_fetch(
             corpus,
             skip_download=skip_download,
             retry_failed=retry_failed,
             workers=workers,
             retries=retries,
+            snapshot_id=snapshot_id,
         )
+        snapshot_id = fetched_snapshot_id if isinstance(fetched_snapshot_id, str) else None
         if stage == "fetch":
             _log_elapsed(corpus, pipeline_start)
             return None
 
     if stage == "clean" or stage is None:
-        await run_clean(corpus)
+        await run_clean(corpus, snapshot_id=snapshot_id)
         if stage == "clean":
             _log_elapsed(corpus, pipeline_start)
             return None
 
     parsed_chunks = None
     if stage == "parse" or stage is None:
-        parsed_chunks = await run_parse(corpus)
+        parsed_chunks = await run_parse(corpus, snapshot_id=snapshot_id)
         if stage == "parse":
             _log_elapsed(corpus, pipeline_start)
             return None
@@ -461,7 +524,12 @@ async def run_pipeline(
     embedded_chunks = None
     if stage == "embed" or stage is None:
         # Thread parsed_chunks from parse stage to avoid re-reading JSONL
-        embedded_chunks = await run_embed(corpus, chunks=parsed_chunks, embedder=embedder)
+        embedded_chunks = await run_embed(
+            corpus,
+            chunks=parsed_chunks,
+            embedder=embedder,
+            snapshot_id=snapshot_id,
+        )
         if stage == "embed":
             _log_elapsed(corpus, pipeline_start)
             return None
@@ -475,18 +543,19 @@ async def run_pipeline(
             embedded_chunks=embedded_chunks,
             pool=pool,
             embedder=embedder,
+            snapshot_id=snapshot_id,
         )
         if stage == "index":
             _log_elapsed(corpus, pipeline_start)
             return result
 
     if stage == "tree":
-        await run_build_tree(corpus, pool=pool)
+        await run_build_tree(corpus, pool=pool, snapshot_id=snapshot_id)
         _log_elapsed(corpus, pipeline_start)
         return None
 
     if stage is None:
-        await run_build_tree(corpus, pool=pool)
+        await run_build_tree(corpus, pool=pool, snapshot_id=snapshot_id)
 
     if stage is not None and stage not in ("fetch", "clean", "parse", "embed", "index", "tree"):
         raise ValueError(

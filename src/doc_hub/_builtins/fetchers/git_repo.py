@@ -6,7 +6,6 @@ using the GitHub Trees API + raw.githubusercontent.com — no git binary require
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import socket
@@ -15,6 +14,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+
+from doc_hub._builtins.fetchers.url_filter import build_exclude_filter
+from doc_hub.versions import snapshot_manifest_from_downloads, utc_now_iso, write_snapshot_manifest
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +82,12 @@ class GitRepoFetcher:
     Optional fetch_config keys:
         subdir (str):  Subdirectory within the repo to restrict fetching to.
                        Derived automatically from the URL if it contains a tree path.
+        docs_dir (str): Alias for ``subdir`` used by the CLI.
         branch (str):  Branch/tag/SHA to fetch (default: derived from URL or "main").
         extensions (list[str]): File extensions to include (default: [".md"]).
+        path_excludes (list[str]): Repo-relative paths under the selected subdir to skip.
+                                   Trailing ``/`` excludes the directory and descendants.
+        path_exclude_pattern (str): Raw regex matched against subdir-relative paths.
         github_token (str): Personal access token for private repos or higher rate
                             limits. Overrides the GITHUB_TOKEN / GH_TOKEN env vars
                             for this specific corpus.
@@ -94,13 +100,19 @@ class GitRepoFetcher:
         output_dir: Path,
     ) -> Path:
         url: str = fetch_config["url"]
+        fetched_at = utc_now_iso()
         owner, repo, branch = _parse_github_url(url)
 
         # subdir: explicit config wins, then derived from URL tree path
-        subdir: str = fetch_config.get("subdir") or _subdir_from_url(url)
+        subdir: str = fetch_config.get("subdir") or fetch_config.get("docs_dir") or _subdir_from_url(url)
         subdir = subdir.strip("/")
 
         extensions: list[str] = fetch_config.get("extensions", [".md"])
+        exclude_filter = build_exclude_filter(
+            base_url="https://example.invalid/" + (subdir + "/" if subdir else ""),
+            url_excludes=fetch_config.get("path_excludes"),
+            url_exclude_pattern=fetch_config.get("path_exclude_pattern"),
+        )
         # fetch_config token wins (per-repo override), then fall back to env vars
         token: str | None = (
             fetch_config.get("github_token")
@@ -129,6 +141,9 @@ class GitRepoFetcher:
                 resp.raise_for_status()
                 tree_data = await resp.json()
 
+            resolved_version = tree_data.get("sha") or fetch_config.get("resolved_version")
+            source_version = fetch_config.get("source_version") or branch
+
             all_blobs: list[dict] = [
                 item for item in tree_data.get("tree", []) if item["type"] == "blob"
             ]
@@ -140,6 +155,11 @@ class GitRepoFetcher:
                 if b["path"].startswith(prefix)
                 and any(b["path"].endswith(ext) for ext in extensions)
             ]
+            if exclude_filter is not None:
+                blobs = [
+                    b for b in blobs
+                    if not exclude_filter("https://example.invalid/" + b["path"])
+                ]
 
             log.info(
                 "[%s] GitHub tree: %d total blobs, %d matching %s under %r",
@@ -152,7 +172,8 @@ class GitRepoFetcher:
 
             # Step 2: download each file
             results: list[dict[str, Any]] = []
-            raw_base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}"
+            raw_ref = resolved_version or branch
+            raw_base = f"https://raw.githubusercontent.com/{owner}/{repo}/{raw_ref}"
 
             for blob in blobs:
                 path_in_repo: str = blob["path"]
@@ -175,6 +196,9 @@ class GitRepoFetcher:
                             "success": True,
                             "error": None,
                             "content_hash": content_hash,
+                            "fetched_at": fetched_at,
+                            "source_version": source_version,
+                            "resolved_version": resolved_version,
                         }
                     )
                 except (aiohttp.ClientError, OSError) as exc:
@@ -186,20 +210,33 @@ class GitRepoFetcher:
                             "success": False,
                             "error": str(exc),
                             "content_hash": None,
+                            "fetched_at": fetched_at,
+                            "source_version": source_version,
+                            "resolved_version": resolved_version,
                         }
                     )
 
-        manifest = {
-            "total": len(results),
-            "success": sum(1 for r in results if r["success"]),
-            "failed": sum(1 for r in results if not r["success"]),
-            "files": sorted(results, key=lambda r: r["filename"]),
-        }
-        (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        manifest = snapshot_manifest_from_downloads(
+            corpus_slug=corpus_slug,
+            fetch_strategy="git_repo",
+            source_type="git_repo",
+            source_url=url,
+            source_version=source_version,
+            resolved_version=resolved_version,
+            fetched_at=fetched_at,
+            fetch_config=fetch_config,
+            files=results,
+            raw={
+                "total": len(results),
+                "success": sum(1 for r in results if r["success"]),
+                "failed": sum(1 for r in results if not r["success"]),
+            },
+        )
+        manifest_data = write_snapshot_manifest(manifest, output_dir)
         log.info(
             "[%s] Done: %d/%d downloaded",
             corpus_slug,
-            manifest["success"],
-            manifest["total"],
+            manifest_data["success"],
+            manifest_data["total"],
         )
         return output_dir

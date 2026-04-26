@@ -34,12 +34,14 @@ def test_docs_list_emits_human_readable_output(capsys):
 
     with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
         "doc_hub.cli.docs.ensure_schema", AsyncMock()
-    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)), patch(
+        "doc_hub.cli.docs.list_doc_versions", AsyncMock(return_value=[])
+    ):
         main(["docs", "list"])
 
     assert capsys.readouterr().out == (
-        "Pydantic AI [pydantic-ai] - enabled\n"
-        "Legacy Docs [legacy] - disabled\n"
+        "Pydantic AI [pydantic-ai] - enabled; no versions\n"
+        "Legacy Docs [legacy] - disabled; no versions\n"
     )
 
 
@@ -54,12 +56,14 @@ def test_docs_list_emits_json_output(capsys):
 
     with patch("doc_hub.cli.docs.create_pool", AsyncMock(return_value=pool)), patch(
         "doc_hub.cli.docs.ensure_schema", AsyncMock()
-    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)):
+    ), patch("doc_hub.cli.docs.list_corpora", AsyncMock(return_value=corpora)), patch(
+        "doc_hub.cli.docs.list_doc_versions", AsyncMock(return_value=[])
+    ):
         main(["docs", "list", "--json"])
 
     assert json.loads(capsys.readouterr().out) == [
-        {"slug": "pydantic-ai", "display_name": "Pydantic AI", "enabled": True},
-        {"slug": "legacy", "display_name": "Legacy Docs", "enabled": False},
+        {"slug": "pydantic-ai", "display_name": "Pydantic AI", "enabled": True, "versions": [], "aliases": {}},
+        {"slug": "legacy", "display_name": "Legacy Docs", "enabled": False, "versions": [], "aliases": {}},
     ]
 
 
@@ -70,7 +74,7 @@ def test_man_prints_bundled_manpage_output(capsys):
 
     output = capsys.readouterr().out
     assert "doc-hub docs list" in output
-    assert "List registered corpora." in output
+    assert "List registered corpora with compact version and alias availability." in output
 
 
 def test_docs_search_routes_to_search_handler():
@@ -78,6 +82,15 @@ def test_docs_search_routes_to_search_handler():
 
     with patch("doc_hub.cli.docs.handle_search") as mock_handler:
         main(["docs", "search", "--corpus", "pydantic-ai", "retry logic"])
+
+    mock_handler.assert_called_once()
+
+
+def test_docs_versions_routes_to_versions_handler():
+    from doc_hub.cli.main import main
+
+    with patch("doc_hub.cli.docs.handle_versions") as mock_handler:
+        main(["docs", "versions", "pydantic-ai"])
 
     mock_handler.assert_called_once()
 
@@ -282,12 +295,14 @@ def test_pipeline_add_parses_git_repo_args():
         "--url", "https://github.com/anthropics/anthropic-sdk-python.git",
         "--branch", "main",
         "--docs-dir", "docs",
+        "--path-excludes", "i18n/",
     ])
 
     assert args.strategy == "git_repo"
     assert args.url == "https://github.com/anthropics/anthropic-sdk-python.git"
     assert args.branch == "main"
     assert args.docs_dir == "docs"
+    assert args.path_excludes == "i18n/"
 
 
 def test_pipeline_add_parses_sitemap_args():
@@ -316,6 +331,9 @@ def test_pipeline_add_builds_config_and_upserts_llms_txt():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"url": "https://ai.pydantic.dev/llms.txt"}
 
@@ -332,6 +350,9 @@ def test_pipeline_add_builds_config_llms_txt_with_optionals():
         retries=5,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {
         "url": "https://ai.pydantic.dev/llms.txt",
@@ -354,6 +375,9 @@ def test_pipeline_add_builds_config_local_dir():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"path": "/tmp/docs"}
 
@@ -370,11 +394,15 @@ def test_pipeline_add_builds_config_git_repo():
         retries=None,
         branch="main",
         docs_dir="docs",
+        extensions=None,
+        path_excludes="i18n/,drafts/",
+        path_exclude_pattern=None,
     ))
     assert config == {
         "url": "https://github.com/org/repo.git",
         "branch": "main",
         "docs_dir": "docs",
+        "path_excludes": ["i18n/", "drafts/"],
     }
 
 
@@ -390,6 +418,9 @@ def test_pipeline_add_builds_config_sitemap():
         retries=None,
         branch=None,
         docs_dir=None,
+        extensions=None,
+        path_excludes=None,
+        path_exclude_pattern=None,
     ))
     assert config == {"url": "https://example.com/sitemap.xml"}
 
@@ -407,6 +438,9 @@ def test_pipeline_add_missing_url_raises():
             retries=None,
             branch=None,
             docs_dir=None,
+            extensions=None,
+            path_excludes=None,
+            path_exclude_pattern=None,
         ))
         assert False, "Expected SystemExit"
     except SystemExit:
@@ -426,6 +460,9 @@ def test_pipeline_add_missing_path_raises():
             retries=None,
             branch=None,
             docs_dir=None,
+            extensions=None,
+            path_excludes=None,
+            path_exclude_pattern=None,
         ))
         assert False, "Expected SystemExit"
     except SystemExit:

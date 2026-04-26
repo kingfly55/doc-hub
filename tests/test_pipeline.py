@@ -6,14 +6,13 @@ Unit tests only — no network, no DB required. DB and HTTP calls are mocked.
 from __future__ import annotations
 
 import argparse
-import shutil
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from doc_hub.fetchers import DEFAULT_RETRIES, DEFAULT_WORKERS
 from doc_hub.models import Corpus
+from doc_hub.versions import snapshot_manifest_from_downloads, write_snapshot_manifest
 from doc_hub.pipeline import (
     _build_arg_parser,
     handle_pipeline_run_args,
@@ -179,7 +178,6 @@ def test_parser_custom_retries():
 async def test_run_fetch_skip_download(tmp_path):
     """run_fetch does nothing when skip_download=True."""
     corpus = _make_corpus()
-    fetch_called = []
 
     with patch("doc_hub.pipeline.fetch") as mock_fetch:
         mock_fetch.return_value = tmp_path
@@ -271,6 +269,71 @@ async def test_run_fetch_does_not_override_existing_config(tmp_path):
         assert captured_config[0]["retries"] == 1
 
 
+@pytest.mark.asyncio
+async def test_run_fetch_materializes_resolved_snapshot_raw(tmp_path):
+    corpus = _make_corpus()
+    legacy_raw, snapshot_id, versioned_raw = _write_legacy_snapshot_raw(tmp_path, corpus)
+
+    def fake_raw_dir(c, snapshot_id=None):
+        if snapshot_id is None:
+            return legacy_raw
+        return tmp_path / "corpus" / "versions" / snapshot_id / "raw"
+
+    async def fake_fetch(slug, strategy, config, output_dir):
+        return output_dir
+
+    with (
+        patch("doc_hub.pipeline.fetch", side_effect=fake_fetch),
+        patch("doc_hub.pipeline.raw_dir", side_effect=fake_raw_dir),
+    ):
+        resolved = await run_fetch(corpus)
+
+    assert resolved == snapshot_id
+    assert (versioned_raw / "guide.md").read_text() == "# Guide\n"
+    assert (versioned_raw / "manifest.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_fetch_skip_download_materializes_resolved_snapshot_raw(tmp_path):
+    corpus = _make_corpus()
+    legacy_raw, snapshot_id, versioned_raw = _write_legacy_snapshot_raw(tmp_path, corpus)
+
+    def fake_raw_dir(c, snapshot_id=None):
+        if snapshot_id is None:
+            return legacy_raw
+        return tmp_path / "corpus" / "versions" / snapshot_id / "raw"
+
+    with patch("doc_hub.pipeline.raw_dir", side_effect=fake_raw_dir):
+        resolved = await run_fetch(corpus, skip_download=True)
+
+    assert resolved == snapshot_id
+    assert (versioned_raw / "guide.md").read_text() == "# Guide\n"
+    assert (versioned_raw / "manifest.json").exists()
+
+
+def _write_legacy_snapshot_raw(tmp_path, corpus):
+    legacy_raw = tmp_path / "corpus" / "raw"
+    legacy_raw.mkdir(parents=True)
+    (legacy_raw / "guide.md").write_text("# Guide\n")
+    manifest = snapshot_manifest_from_downloads(
+        corpus_slug=corpus.slug,
+        fetch_strategy=corpus.fetch_strategy,
+        source_type="llms_txt",
+        source_url="https://example.com/llms.txt",
+        files=[{
+            "filename": "guide.md",
+            "url": "https://example.com/guide.md",
+            "success": True,
+            "content_hash": "abc123",
+        }],
+        fetch_config=corpus.fetch_config,
+    )
+    manifest_data = write_snapshot_manifest(manifest, legacy_raw)
+    snapshot_id = manifest_data["snapshot"]["snapshot_id"]
+    versioned_raw = tmp_path / "corpus" / "versions" / snapshot_id / "raw"
+    return legacy_raw, snapshot_id, versioned_raw
+
+
 # ---------------------------------------------------------------------------
 # run_pipeline — stage dispatch
 # ---------------------------------------------------------------------------
@@ -280,8 +343,6 @@ async def test_run_fetch_does_not_override_existing_config(tmp_path):
 async def test_run_pipeline_fetch_stage_only(tmp_path):
     """run_pipeline --stage fetch only calls run_fetch."""
     corpus = _make_corpus()
-    fetch_called = []
-    parse_called = []
 
     with (
         patch("doc_hub.pipeline.run_fetch", new=AsyncMock()) as mock_fetch,

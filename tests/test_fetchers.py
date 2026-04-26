@@ -103,6 +103,97 @@ async def test_git_repo_fetcher_missing_url_raises():
         await fetcher.fetch("test-corpus", {}, Path("/tmp"))
 
 
+class _GitRepoJsonResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    async def json(self):
+        return self.payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _GitRepoBytesResponse:
+    def __init__(self, content: bytes):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+    async def read(self):
+        return self.content
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _GitRepoSession:
+    def __init__(self, tree_payload, contents_by_url):
+        self.tree_payload = tree_payload
+        self.contents_by_url = contents_by_url
+        self.requests = []
+
+    def get(self, url):
+        self.requests.append(url)
+        if "api.github.com/repos/" in url:
+            return _GitRepoJsonResponse(self.tree_payload)
+        return _GitRepoBytesResponse(self.contents_by_url[url])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_git_repo_fetcher_respects_path_excludes(tmp_path):
+    fetcher = GitRepoFetcher()
+    tree_payload = {
+        "sha": "resolved-sha",
+        "tree": [
+            {"path": "docs/index.md", "type": "blob"},
+            {"path": "docs/guide/getting-started.md", "type": "blob"},
+            {"path": "docs/i18n/README.md", "type": "blob"},
+            {"path": "docs/i18n/pt-BR/guide.md", "type": "blob"},
+            {"path": "README.md", "type": "blob"},
+        ],
+    }
+    contents_by_url = {
+        "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/resolved-sha/docs/index.md": b"# Index",
+        "https://raw.githubusercontent.com/diegosouzapw/OmniRoute/resolved-sha/docs/guide/getting-started.md": b"# Guide",
+    }
+    session = _GitRepoSession(tree_payload, contents_by_url)
+
+    with patch("doc_hub._builtins.fetchers.git_repo.aiohttp.ClientSession", return_value=session):
+        result = await fetcher.fetch(
+            "omniroute",
+            {
+                "url": "https://github.com/diegosouzapw/OmniRoute/tree/main/docs",
+                "docs_dir": "docs",
+                "path_excludes": ["i18n/"],
+            },
+            tmp_path,
+        )
+
+    assert result == tmp_path
+    assert (tmp_path / "index.md").exists()
+    assert (tmp_path / "guide__getting-started.md").exists()
+    assert not (tmp_path / "i18n__README.md").exists()
+    assert not (tmp_path / "i18n__pt-BR__guide.md").exists()
+    assert all("/docs/i18n/" not in url for url in session.requests)
+
+
 # ---------------------------------------------------------------------------
 # LocalDirFetcher
 # ---------------------------------------------------------------------------
@@ -127,9 +218,13 @@ async def test_local_dir_fetcher_nonexistent_raises():
 @pytest.mark.asyncio
 async def test_local_dir_fetcher_returns_path(tmp_path):
     """LocalDirFetcher returns the configured path when the directory exists."""
+    (tmp_path / "index.md").write_text("# Index")
     fetcher = LocalDirFetcher()
     result = await fetcher.fetch("test", {"path": str(tmp_path)}, Path("/tmp"))
     assert result == tmp_path
+    data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
+    assert data["files"][0]["source_version"] == "latest"
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +322,11 @@ def test_write_manifest_creates_file(tmp_path):
     ]
     write_manifest(results, tmp_path)
     data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
     assert data["total"] == 2
     assert data["success"] == 1
     assert data["failed"] == 1
+    assert data["snapshot"]["snapshot_id"].startswith("sha256-")
     filenames = [f["filename"] for f in data["files"]]
     assert "a.md" in filenames
     assert "b.md" in filenames
@@ -243,6 +340,8 @@ def test_write_manifest_includes_content_hash(tmp_path):
     write_manifest(results, tmp_path)
     data = json.loads((tmp_path / "manifest.json").read_text())
     assert data["files"][0]["content_hash"] == "abc123"
+    assert data["files"][0]["source_version"] == "latest"
+    assert data["files"][0]["fetched_at"] is not None
 
 
 def test_write_manifest_sorted_by_filename(tmp_path):
@@ -500,8 +599,11 @@ async def test_llms_txt_fetcher_writes_manifest(tmp_path):
 
     assert (tmp_path / "manifest.json").exists()
     data = json.loads((tmp_path / "manifest.json").read_text())
+    assert data["schema_version"] == 2
     assert "total" in data
     assert "files" in data
+    assert data["source"]["source_version"] == "latest"
+    assert data["snapshot"]["snapshot_id"].startswith("sha256-")
 
 
 @pytest.mark.asyncio

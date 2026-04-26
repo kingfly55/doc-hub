@@ -48,6 +48,9 @@ class Chunk:
     char_count: int        # Length of content
     content_hash: str      # SHA-256 hex digest of content (for embed cache)
     category: str          # Content category (api, example, eval, guide, other)
+    snapshot_id: str = "legacy"
+    source_version: str = "latest"
+    fetched_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +129,9 @@ def _make_chunk(
     content: str,
     start_line: int,
     end_line: int | None = None,
+    snapshot_id: str = "legacy",
+    source_version: str = "latest",
+    fetched_at: str | None = None,
 ) -> Chunk:
     """Construct a Chunk, computing content_hash, category, and end_line automatically.
 
@@ -148,6 +154,9 @@ def _make_chunk(
         char_count=len(content),
         content_hash=hashlib.sha256(content.encode()).hexdigest(),
         category=derive_category(source_file),
+        snapshot_id=snapshot_id,
+        source_version=source_version,
+        fetched_at=fetched_at,
     )
 
 
@@ -273,6 +282,9 @@ def _split_mega_chunk(chunk: Chunk, max_chars: int = 6000, target: int = 1500) -
             heading_level=chunk.heading_level,
             content=piece_stripped,
             start_line=sub_start,
+            snapshot_id=chunk.snapshot_id,
+            source_version=chunk.source_version,
+            fetched_at=chunk.fetched_at,
         ))
         # Advance current_line by the newlines in the raw (unstripped) piece
         current_line += piece.count("\n")
@@ -292,6 +304,9 @@ def _split_mega_chunk(chunk: Chunk, max_chars: int = 6000, target: int = 1500) -
             heading_level=chunk.heading_level,
             content=remainder_stripped,
             start_line=sub_start,
+            snapshot_id=chunk.snapshot_id,
+            source_version=chunk.source_version,
+            fetched_at=chunk.fetched_at,
         ))
 
     return sub_chunks if sub_chunks else [chunk]
@@ -337,6 +352,9 @@ def _merge_tiny_chunks(chunks: list[Chunk], min_chars: int = 200) -> list[Chunk]
                     content=merged_content,
                     start_line=prev.start_line,
                     end_line=chunk.end_line,
+                    snapshot_id=prev.snapshot_id,
+                    source_version=prev.source_version,
+                    fetched_at=prev.fetched_at,
                 )
                 changed = True
             else:
@@ -410,6 +428,8 @@ def parse_docs(
     raw_path: Path,
     parser_name: str = "markdown",
     base_url: str = "",
+    *,
+    snapshot_id: str | None = None,
 ) -> list[Chunk]:
     """Parse raw files into optimized, deduplicated chunks.
 
@@ -439,6 +459,10 @@ def parse_docs(
 
     # Step 1: Parser produces raw chunks
     all_chunks = parser.parse(raw_path, corpus_slug=corpus_slug, base_url=base_url)
+
+    if snapshot_id is not None:
+        for chunk in all_chunks:
+            chunk.snapshot_id = snapshot_id
 
     # Step 2: Derive categories (parser leaves category empty)
     for chunk in all_chunks:
@@ -475,7 +499,7 @@ def parse_docs(
     _warn_large_chunks(all_chunks)
 
     # Step 6: Write output
-    output_dir = chunks_dir(corpus_slug)
+    output_dir = chunks_dir(corpus_slug, snapshot_id=snapshot_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     write_chunks_jsonl(all_chunks, output_dir / "chunks.jsonl")
 

@@ -36,10 +36,18 @@ def test_documents_ddl_is_idempotent():
 
 
 def test_documents_ddl_has_unique_constraint():
-    """Verify doc_documents DDL has UNIQUE(corpus_id, doc_path)."""
+    """Verify doc_documents DDL has UNIQUE(corpus_id, snapshot_id, doc_path)."""
     from doc_hub.db import _DOCUMENTS_DDL
 
-    assert "UNIQUE (corpus_id, doc_path)" in _DOCUMENTS_DDL
+    assert "UNIQUE (corpus_id, snapshot_id, doc_path)" in _DOCUMENTS_DDL
+
+
+def test_documents_ddl_has_version_columns():
+    """Verify doc_documents DDL includes version metadata columns."""
+    from doc_hub.db import _DOCUMENTS_DDL
+
+    assert "snapshot_id text NOT NULL" in _DOCUMENTS_DDL
+    assert "source_version text NOT NULL" in _DOCUMENTS_DDL
 
 
 def test_documents_ddl_parent_fk_on_delete_set_null():
@@ -80,9 +88,9 @@ def test_documents_indexes_present():
         "CREATE INDEX IF NOT EXISTS doc_documents_parent_id_idx",
         "ON doc_documents (parent_id)",
         "CREATE INDEX IF NOT EXISTS doc_documents_corpus_sort_order_idx",
-        "ON doc_documents (corpus_id, sort_order)",
+        "ON doc_documents (corpus_id, snapshot_id, sort_order)",
         "CREATE INDEX IF NOT EXISTS doc_documents_corpus_path_idx",
-        "ON doc_documents (corpus_id, doc_path text_pattern_ops)",
+        "ON doc_documents (corpus_id, snapshot_id, doc_path text_pattern_ops)",
     ]
 
     for index_stmt in expected_indexes:
@@ -112,6 +120,8 @@ async def test_ensure_schema_executes_documents_before_chunk_document_indexes(mo
         _DOCUMENTS_DDL,
         _DOCUMENTS_INDEXES_DDL,
         _INDEXES_DDL,
+        _LEGACY_CHUNKS_VERSION_COLUMNS_DDL,
+        _LEGACY_DOCUMENTS_VERSION_COLUMNS_DDL,
         _META_DDL,
         ensure_schema,
     )
@@ -135,6 +145,16 @@ async def test_ensure_schema_executes_documents_before_chunk_document_indexes(mo
 
     meta_idx = executed.index(_META_DDL)
     documents_idx = executed.index(_DOCUMENTS_DDL)
+    chunks_migration_idx = min(
+        executed.index(stmt.strip())
+        for stmt in _LEGACY_CHUNKS_VERSION_COLUMNS_DDL.strip().split(";")
+        if stmt.strip()
+    )
+    documents_migration_idx = min(
+        executed.index(stmt.strip())
+        for stmt in _LEGACY_DOCUMENTS_VERSION_COLUMNS_DDL.strip().split(";")
+        if stmt.strip()
+    )
     chunks_document_id_idx = executed.index(_CHUNKS_DOCUMENT_ID_DDL)
     existing_indexes = [stmt.strip() for stmt in _INDEXES_DDL.strip().split("\n\n") if stmt.strip()]
     document_indexes = [stmt.strip() for stmt in _DOCUMENTS_INDEXES_DDL.strip().split("\n\n") if stmt.strip()]
@@ -144,8 +164,10 @@ async def test_ensure_schema_executes_documents_before_chunk_document_indexes(mo
     last_document_index_idx = executed.index(document_indexes[-1])
     chunks_document_id_index_idx = executed.index(_CHUNKS_DOCUMENT_ID_INDEX)
 
+    assert chunks_migration_idx < meta_idx
     assert meta_idx < documents_idx
-    assert documents_idx < chunks_document_id_idx
+    assert documents_idx < documents_migration_idx
+    assert documents_migration_idx < chunks_document_id_idx
     assert chunks_document_id_idx < first_existing_index_idx
     assert last_existing_index_idx < first_document_index_idx
     assert last_document_index_idx < chunks_document_id_index_idx

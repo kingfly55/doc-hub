@@ -22,7 +22,7 @@ Source: `src/doc_hub/_builtins/fetchers/`, `src/doc_hub/fetchers.py`, `src/doc_h
 |---|---|---|---|
 | `llms_txt` strategy | llms_txt | `url`, `url_pattern`, `base_url` | Parses an `llms.txt` index and downloads each listed doc URL |
 | `sitemap` strategy | sitemap | `url` | Crawls `sitemap.xml` / `sitemap.xml.gz` (auto-decompress) |
-| `git_repo` strategy | git_repo | `url`, `branch`, `subdir`, `extensions`, `github_token` | Clones GitHub repos via the Trees API |
+| `git_repo` strategy | git_repo | `url`, `branch`, `subdir`, `docs_dir`, `extensions`, `path_excludes`, `path_exclude_pattern`, `github_token` | Clones GitHub repos via the Trees API |
 | `direct_url` strategy | direct_url | `url` / `urls`, `filenames` | Downloads one or more URLs directly (e.g. `llms-full.txt`) |
 | `local_dir` strategy | local_dir | `path` | Links/copies a local markdown directory |
 | URL prefix inclusion | sitemap | `url_prefix` | Restrict to URLs starting with a given subdirectory |

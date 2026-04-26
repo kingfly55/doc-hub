@@ -20,6 +20,7 @@ from doc_hub.search import (
     _build_hybrid_sql,
     _escape_like,
     _embed_query_async,
+    resolve_search_scope,
     search_docs,
 )
 
@@ -40,6 +41,8 @@ def _make_row(
     vec_similarity: float = 0.80,
     rrf_score: float = 0.033,
     source_file: str = "guide__test.md",
+    snapshot_id: str = "legacy",
+    source_version: str = "latest",
 ) -> dict:
     """Build a fake asyncpg-style row dict."""
     return {
@@ -56,6 +59,8 @@ def _make_row(
         "end_line": 10,
         "source_file": source_file,
         "doc_path": source_file.removesuffix(".md").replace("__", "/"),
+        "snapshot_id": snapshot_id,
+        "source_version": source_version,
     }
 
 
@@ -162,6 +167,8 @@ class TestSearchResult:
             end_line=5,
             source_file="api__hello.md",
             doc_path="api/hello",
+            snapshot_id="snap-1",
+            source_version="1.0",
         )
         assert r.id == 42
         assert r.corpus_id == "test-corpus"
@@ -175,6 +182,8 @@ class TestSearchResult:
         assert r.start_line == 1
         assert r.end_line == 5
         assert r.source_file == "api__hello.md"
+        assert r.snapshot_id == "snap-1"
+        assert r.source_version == "1.0"
 
     def test_source_file_field_present(self):
         """SearchResult has a source_file field for doc_id derivation."""
@@ -269,8 +278,8 @@ class TestBuildHybridSQL:
 
     def test_limit_offset_params(self):
         sql = _build_hybrid_sql()
-        assert "LIMIT $8" in sql
-        assert "OFFSET $9" in sql
+        assert "LIMIT $9" in sql
+        assert "OFFSET $10" in sql
 
     def test_rrf_scoring_formula(self):
         sql = _build_hybrid_sql()
@@ -386,6 +395,50 @@ class TestEmbedQueryAsync:
             await _embed_query_async("test", embedder=None)
 
         mock_registry.get_embedder.assert_called_once_with("openai")
+
+
+# ---------------------------------------------------------------------------
+# resolve_search_scope()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_search_scope_versions_are_explicit_snapshot_keys():
+    pool = MagicMock()
+    rows = [
+        {"source_version": "18", "snapshot_id": "snap-18", "aliases": None},
+        {"source_version": "19", "snapshot_id": "snap-19", "aliases": ["latest"]},
+    ]
+
+    async def fetch(query, *args):
+        return rows
+
+    async def fetchval(query, corpus, selector):
+        if selector == "18":
+            return "snap-18"
+        if selector == "19":
+            return "snap-19"
+        return None
+
+    pool.fetch = AsyncMock(side_effect=fetch)
+    pool.fetchval = AsyncMock(side_effect=fetchval)
+
+    scope = await resolve_search_scope(pool, ["react"], versions=["18", "19"])
+
+    assert scope["snapshot_scope_keys"] == ["react:snap-18", "react:snap-19"]
+    assert scope["searched_versions"] == [
+        {"corpus": "react", "requested": "18", "snapshot_id": "snap-18", "selected_by": "explicit"},
+        {"corpus": "react", "requested": "19", "snapshot_id": "snap-19", "selected_by": "explicit"},
+    ]
+    assert scope["available_versions"] == {"react": ["18", "19"]}
+    assert scope["aliases"] == {"react": {"latest": "19"}}
+
+
+@pytest.mark.asyncio
+async def test_resolve_search_scope_rejects_conflicting_modes():
+    pool = MagicMock()
+    with pytest.raises(ValueError, match="only one"):
+        await resolve_search_scope(pool, ["react"], version="18", all_versions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +633,7 @@ class TestSearchDocs:
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         call_args = mock_conn.fetch.call_args
         positional_args = call_args[0]
-        assert positional_args[8] == 10  # $8
+        assert positional_args[9] == 10  # $9
 
     @pytest.mark.asyncio
     async def test_offset_passed_to_sql(self):
@@ -593,7 +646,7 @@ class TestSearchDocs:
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         call_args = mock_conn.fetch.call_args
         positional_args = call_args[0]
-        assert positional_args[9] == 20  # $9
+        assert positional_args[10] == 20  # $10
 
     @pytest.mark.asyncio
     async def test_custom_min_similarity(self):
@@ -665,6 +718,48 @@ class TestSearchDocs:
         assert results[0].source_file == "guide__install.md"
 
     @pytest.mark.asyncio
+    async def test_result_has_version_metadata(self):
+        pool = _make_pool([_make_row(vec_similarity=0.90, snapshot_id="snap-1", source_version="1.0")])
+        embedder = _make_mock_embedder()
+
+        results = await search_docs("query", pool=pool, embedder=embedder)
+
+        assert results[0].snapshot_id == "snap-1"
+        assert results[0].source_version == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_scope_passed_to_sql(self):
+        pool = _make_pool([])
+        embedder = _make_mock_embedder()
+
+        await search_docs(
+            "query",
+            pool=pool,
+            embedder=embedder,
+            snapshot_ids={"corpus-a": "snap-1", "corpus-b": "snap-2"},
+        )
+
+        mock_conn = pool.acquire.return_value.__aenter__.return_value
+        positional_args = mock_conn.fetch.call_args[0]
+        assert positional_args[8] == ["corpus-a:snap-1", "corpus-b:snap-2"]
+
+    @pytest.mark.asyncio
+    async def test_snapshot_scope_keys_passed_to_sql(self):
+        pool = _make_pool([])
+        embedder = _make_mock_embedder()
+
+        await search_docs(
+            "query",
+            pool=pool,
+            embedder=embedder,
+            snapshot_scope_keys=["corpus-a:snap-1", "corpus-a:snap-2"],
+        )
+
+        mock_conn = pool.acquire.return_value.__aenter__.return_value
+        positional_args = mock_conn.fetch.call_args[0]
+        assert positional_args[8] == ["corpus-a:snap-1", "corpus-a:snap-2"]
+
+    @pytest.mark.asyncio
     async def test_custom_search_config(self):
         """SearchConfig is forwarded to _build_hybrid_sql."""
         pool = _make_pool([])
@@ -692,9 +787,9 @@ class TestSearchDocs:
         mock_conn = pool.acquire.return_value.__aenter__.return_value
         call_args = mock_conn.fetch.call_args
         positional_args = call_args[0]
-        # $8=limit, $9=offset
-        assert positional_args[8] == 5   # $8
-        assert positional_args[9] == 15  # $9
+        # $9=limit, $10=offset
+        assert positional_args[9] == 5   # $9
+        assert positional_args[10] == 15  # $10
 
 
 # ---------------------------------------------------------------------------
@@ -703,12 +798,11 @@ class TestSearchDocs:
 
 
 class TestSQLBindParameterOrder:
-    """Verify the SQL bind parameter contract ($1..$9) is correct."""
+    """Verify the SQL bind parameter contract ($1..$10) is correct."""
 
-    def test_sql_has_nine_parameters(self):
+    def test_sql_has_ten_parameters(self):
         sql = _build_hybrid_sql()
-        # $9 is the highest parameter — verify it exists
-        assert "$9" in sql
+        assert "$10" in sql
 
     def test_corpus_is_third_param(self):
         sql = _build_hybrid_sql()
@@ -732,13 +826,17 @@ class TestSQLBindParameterOrder:
         assert "$7" in sql
         assert "section_path LIKE $7" in sql
 
-    def test_limit_is_eighth_param(self):
+    def test_snapshot_scope_is_eighth_param(self):
         sql = _build_hybrid_sql()
-        assert "LIMIT $8" in sql
+        assert "$8::text[] IS NULL OR corpus_id || ':' || snapshot_id = ANY($8)" in sql
 
-    def test_offset_is_ninth_param(self):
+    def test_limit_is_ninth_param(self):
         sql = _build_hybrid_sql()
-        assert "OFFSET $9" in sql
+        assert "LIMIT $9" in sql
+
+    def test_offset_is_tenth_param(self):
+        sql = _build_hybrid_sql()
+        assert "OFFSET $10" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -775,6 +873,9 @@ class TestCLIParsing:
             min_similarity=0.55,
             source_url_prefix=None,
             section_path_prefix=None,
+            version=None,
+            versions=None,
+            all_versions=False,
             vector_limit=None,
             text_limit=None,
             rrfk=None,
@@ -786,6 +887,58 @@ class TestCLIParsing:
             handle_search_args(args)
 
         assert mock_search.call_args.kwargs["corpora"] == ["pydantic-ai", "fastapi"]
+
+    def test_search_accepts_version_flag(self):
+        from doc_hub.search import build_search_parser
+
+        parser = build_search_parser()
+        args = parser.parse_args(["--corpus", "pydantic-ai", "--version", "1.0", "retry logic"])
+
+        assert args.version == "1.0"
+
+    def test_handle_search_args_passes_version_to_search(self):
+        from doc_hub.search import handle_search_args
+
+        args = argparse.Namespace(
+            query="retry logic",
+            corpora=["pydantic-ai"],
+            categories=None,
+            exclude_categories=None,
+            limit=5,
+            offset=0,
+            min_similarity=0.55,
+            source_url_prefix=None,
+            section_path_prefix=None,
+            version="1.0",
+            versions=None,
+            all_versions=False,
+            vector_limit=None,
+            text_limit=None,
+            rrfk=None,
+            language=None,
+            json=False,
+        )
+
+        with patch("doc_hub.search.search_docs_sync", return_value=[] ) as mock_search:
+            handle_search_args(args)
+
+        assert mock_search.call_args.kwargs["version"] == "1.0"
+
+    def test_search_accepts_versions_flag(self):
+        from doc_hub.search import build_search_parser
+
+        parser = build_search_parser()
+        args = parser.parse_args(["--corpus", "pydantic-ai", "--versions", "1.0,2.0", "retry logic"])
+
+        assert args.versions == "1.0,2.0"
+
+    def test_search_accepts_all_versions_flag(self):
+        from doc_hub.search import build_search_parser
+
+        parser = build_search_parser()
+        args = parser.parse_args(["--corpus", "pydantic-ai", "--all-versions", "retry logic"])
+
+        assert args.all_versions is True
 
 
 class TestCLIMain:

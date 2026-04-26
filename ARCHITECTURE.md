@@ -192,7 +192,7 @@ Four layers with strict import rules:
 
 **Plugins are responsible for:**
 - Fetcher: fetching/locating source files, writing `.md` files to `output_dir`, writing optional `manifest.json`.
-- Parser: converting `.md` files to raw `Chunk` objects with all 11 fields set; `category` MUST be `""`.
+- Parser: converting `.md` files to raw `Chunk` objects with core content fields set; `category` MUST be `""`. Snapshot/version provenance is filled from manifest metadata by the pipeline when absent.
 - Embedder: calling the embedding API, returning raw (non-normalized) vectors.
 
 **Core pipeline handles (plugins must NOT do these):**
@@ -236,11 +236,15 @@ Data root resolution order (from `data_root()`):
 ```
 {data_root}/
   {slug}/
-    raw/               # Fetched .md files + manifest.json
-    chunks/
-      chunks.jsonl          # Serialized list[Chunk]
-      embedded_chunks.jsonl # Serialized list[EmbeddedChunk]
-      embeddings_cache.jsonl# Cache: {content_hash, model, dimensions, embedding}
+    raw/               # Legacy fetched .md files + manifest.json
+    chunks/            # Legacy chunks/embeddings cache
+    versions/
+      {snapshot_id}/
+        raw/               # Versioned .md files + manifest.json
+        chunks/
+          chunks.jsonl
+          embedded_chunks.jsonl
+          embeddings_cache.jsonl
   plugins/
     fetchers/*.py      # Local fetcher plugin files
     parsers/*.py       # Local parser plugin files
@@ -249,12 +253,14 @@ Data root resolution order (from `data_root()`):
 
 ### PostgreSQL
 
-Three tables, created idempotently by `ensure_schema()` (`db.py`):
+Five core tables, created idempotently by `ensure_schema()` (`db.py`):
 
 | Table | Purpose |
 |---|---|
 | `doc_corpora` | Corpus registry: slug, name, strategy, parser, embedder, fetch_config (JSONB), enabled |
-| `doc_chunks` | All indexed chunks: content, heading, embedding `vector({dim})`, tsv tsvector, corpus_id FK |
+| `doc_versions` | Immutable documentation snapshots per corpus, including source version, snapshot hash, fetch provenance, and indexed chunk count |
+| `doc_version_aliases` | Mutable aliases such as `latest` pointing to a corpus snapshot |
+| `doc_chunks` | All indexed chunks: content, heading, embedding `vector({dim})`, tsv tsvector, corpus_id FK, snapshot/version metadata |
 | `doc_index_meta` | Per-corpus key/value: last_indexed_at, total_chunks, embedding_model, embedding_dimensions |
 
 Extension: `CREATE EXTENSION IF NOT EXISTS vchord CASCADE` (installs pgvector as dependency).
@@ -284,15 +290,19 @@ Data flows through these types in order:
 Corpus (models.py)
   └─ loaded from doc_corpora at pipeline start
 
+DocVersion (versions.py)
+  └─ immutable snapshot metadata: corpus_id, snapshot_id, source_version, content hash, fetched_at
+
 Chunk (parse.py)
   ├─ produced by Parser plugin + parse.py post-processing
-  ├─ 11 fields: source_file, source_url, section_path, heading, heading_level,
-  │             content, start_line, end_line, char_count, content_hash, category
+  ├─ source_file, source_url, section_path, heading, heading_level,
+  │  content, start_line, end_line, char_count, content_hash, category,
+  │  snapshot_id, source_version, fetched_at
   └─ written to chunks.jsonl
 
 EmbeddedChunk (embed.py)
   ├─ Chunk fields + embedding: list[float] (L2-normalized)
-  └─ written to embedded_chunks.jsonl
+  └─ written to embedded_chunks.jsonl with snapshot/version metadata
 
 IndexResult (index.py)
   ├─ returned by upsert_chunks()
@@ -301,7 +311,8 @@ IndexResult (index.py)
 SearchResult (search.py)
   ├─ returned by search_docs()
   └─ fields: id, corpus_id, heading, section_path, content, source_url,
-             score (RRF), similarity (cosine), category, start_line, end_line
+             score (RRF), similarity (cosine), category, start_line, end_line,
+             source_file, doc_path, snapshot_id, source_version
 ```
 
 **`embedding_input()` format** (`parse.py`):

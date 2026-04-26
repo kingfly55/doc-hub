@@ -322,9 +322,7 @@ async def test_embed_chunks_rate_limit_sleep_between_batches(tmp_path):
     ):
         await embed_chunks("test-corpus", chunks, embedder)
 
-    # Should have slept once between 2 batches
-    assert len(sleep_calls) == 1
-    assert sleep_calls[0] == 65.0
+    assert sleep_calls == []
 
 
 @pytest.mark.asyncio
@@ -423,9 +421,9 @@ async def test_embed_chunks_accepts_corpus_slug_string(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_batch_size_is_50():
-    """BATCH_SIZE constant is 50 (matches Gemini free-tier limit)."""
-    assert BATCH_SIZE == 50
+def test_batch_size_is_100():
+    """BATCH_SIZE constant is 100 (Gemini batchEmbedContents hard limit)."""
+    assert BATCH_SIZE == 100
 
 
 # ---------------------------------------------------------------------------

@@ -14,10 +14,24 @@ import logging
 from dotenv import load_dotenv
 
 from doc_hub.corpora import validate_corpus_available
-from doc_hub.db import create_pool, ensure_schema
+from doc_hub.db import create_pool, ensure_schema, get_default_snapshot_id, resolve_version_selector
 from doc_hub.documents import get_document_chunks_by_doc_id, get_document_tree
 
 log = logging.getLogger(__name__)
+
+def _split_corpus_selector(selector: str) -> tuple[str, str | None]:
+    corpus, sep, version = selector.partition("@")
+    return corpus, version if sep else None
+
+
+async def _resolve_snapshot_id(pool, corpus: str, version: str | None) -> str:
+    if version is None:
+        return await get_default_snapshot_id(pool, corpus)
+    snapshot_id = await resolve_version_selector(pool, corpus, version)
+    if snapshot_id is None:
+        raise ValueError(f"Version {version!r} not found for corpus {corpus!r}")
+    return snapshot_id
+
 
 def _render_tree(nodes: list[dict]) -> str:
     if not nodes:
@@ -44,13 +58,18 @@ async def browse(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
-        await validate_corpus_available(pool, args.corpus)
-        nodes = await get_document_tree(pool, args.corpus, path=args.path, max_depth=args.depth)
+        corpus, inline_version = _split_corpus_selector(args.corpus)
+        if args.version is not None and inline_version is not None:
+            raise ValueError("Specify versions either with corpus@version or --version, not both")
+        version = args.version or inline_version
+        await validate_corpus_available(pool, corpus)
+        snapshot_id = await _resolve_snapshot_id(pool, corpus, version)
+        nodes = await get_document_tree(pool, corpus, path=args.path, max_depth=args.depth, snapshot_id=snapshot_id)
         if args.json:
-            print(json.dumps(nodes, indent=2))
+            print(json.dumps({"corpus": corpus, "snapshot_id": snapshot_id, "documents": nodes}, indent=2))
             return
 
-        print(args.corpus)
+        print(f"{corpus}@{snapshot_id}")
         print(_render_tree(nodes))
     finally:
         await pool.close()
@@ -60,10 +79,15 @@ async def read(args: argparse.Namespace) -> None:
     pool = await create_pool()
     try:
         await ensure_schema(pool)
-        await validate_corpus_available(pool, args.corpus)
-        doc_path, chunks = await get_document_chunks_by_doc_id(pool, args.corpus, args.doc_id)
+        corpus, inline_version = _split_corpus_selector(args.corpus)
+        if args.version is not None and inline_version is not None:
+            raise ValueError("Specify versions either with corpus@version or --version, not both")
+        version = args.version or inline_version
+        await validate_corpus_available(pool, corpus)
+        snapshot_id = await _resolve_snapshot_id(pool, corpus, version)
+        doc_path, chunks = await get_document_chunks_by_doc_id(pool, corpus, args.doc_id, snapshot_id=snapshot_id)
         if doc_path is None or not chunks:
-            print(f"Document '{args.doc_id}' not found in corpus '{args.corpus}'")
+            print(f"Document '{args.doc_id}' not found in corpus '{corpus}' at snapshot '{snapshot_id}'")
             return
 
         title = next(
@@ -80,6 +104,7 @@ async def read(args: argparse.Namespace) -> None:
             "title": title,
             "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
             "source_url": source_url,
+            "snapshot_id": snapshot_id,
             "total_chars": total_chars,
             "section_count": section_count,
         }
@@ -101,6 +126,7 @@ def build_browse_parser(parser: argparse.ArgumentParser | None = None) -> argpar
     parser.add_argument("corpus", help="Corpus slug to browse")
     parser.add_argument("--path", help="Optional subtree path to browse")
     parser.add_argument("--depth", type=int, help="Maximum depth below the selected path")
+    parser.add_argument("--version", help="Version selector to browse")
     parser.add_argument("--json", action="store_true", help="Emit JSON output")
     return parser
 
@@ -112,6 +138,7 @@ def build_read_parser(parser: argparse.ArgumentParser | None = None) -> argparse
     )
     parser.add_argument("corpus", help="Corpus slug containing the document")
     parser.add_argument("doc_id", help="Document ID shown in doc-hub docs browse output")
+    parser.add_argument("--version", help="Version selector to read")
     parser.add_argument("--json", action="store_true", help="Emit JSON output")
     return parser
 
