@@ -622,7 +622,7 @@ async def test_doc_corpora_no_check_constraint():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_doc_chunks_unique_constraint():
-    """Integration: verify doc_chunks unique constraint is (corpus_id, content_hash)."""
+    """Integration: verify doc_chunks unique constraint is (corpus_id, snapshot_id, content_hash)."""
     from doc_hub.db import create_pool, ensure_schema
 
     pool = await create_pool()
@@ -630,16 +630,15 @@ async def test_doc_chunks_unique_constraint():
         await ensure_schema(pool)
 
         async with pool.acquire() as conn:
-            # Check for unique constraint on (corpus_id, content_hash)
             result = await conn.fetchval(
                 """
                 SELECT 1 FROM pg_constraint
                 WHERE conrelid = 'doc_chunks'::regclass
                   AND contype = 'u'
-                  AND array_length(conkey, 1) = 2
+                  AND pg_get_constraintdef(oid) = 'UNIQUE (corpus_id, snapshot_id, content_hash)'
                 """
             )
-            assert result == 1, "doc_chunks should have a 2-column unique constraint"
+            assert result == 1, "doc_chunks should have a version-scoped unique constraint"
     finally:
         await pool.close()
 
