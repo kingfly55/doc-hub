@@ -12,7 +12,7 @@ Keep to the top-level command tree and use the examples below as a quick referen
 .B doc-hub docs list
 List registered corpora with compact version and alias availability.
 .TP
-.B doc-hub docs versions CORPUS
+.B doc-hub docs versions --corpus CORPUS
 List indexed versions and aliases for a corpus.
 .TP
 .B doc-hub man
@@ -21,10 +21,10 @@ Print the built-in manual page.
 .B doc-hub docs search --corpus CORPUS [--corpus CORPUS ...] [--version VERSION|--versions V1,V2|--all-versions] [--json [--schema v1|v2] | --json-object] [--max-content-chars N] "QUERY"
 Search one or more corpora. Version flags are strict; doc-hub does not fall back to unsearched versions. Use \fB--json --schema v2\fR or \fB--json-object\fR for structured agent responses with diagnostics, read targets, truncation metadata, and provenance.
 .TP
-.B doc-hub docs browse CORPUS[@VERSION]
+.B doc-hub docs browse --corpus CORPUS[@VERSION]
 Browse persisted corpus documents and short IDs for the default or selected version.
 .TP
-.B doc-hub docs read CORPUS[@VERSION] DOC_ID [--json] [--max-content-chars N]
+.B doc-hub docs read --corpus CORPUS[@VERSION] DOC_ID [--json] [--max-content-chars N]
 Read a document by its snapshot-scoped short document ID (shown in browse or search output). JSON output includes citation metadata, section line metadata, truncation metadata, and provenance.
 .TP
 .B doc-hub pipeline add [<name>] [--strategy {llms_txt,sitemap,git_repo,local_dir}] [--url URL] [--path PATH] [--slug SLUG] [--no-index] [--interactive] [--use-jina] [--try-md] [--clean] [--url-pattern PATTERN] [--url-suffix SUFFIX] [--base-url URL] [--workers N] [--retries N] [--branch BRANCH] [--docs-dir DIR]
@@ -82,7 +82,7 @@ List versions for a corpus:
 .PP
 .RS
 .nf
-doc-hub docs versions react
+doc-hub docs versions --corpus react
 .fi
 .RE
 .PP
@@ -122,8 +122,8 @@ Browse and read documentation:
 .PP
 .RS
 .nf
-doc-hub docs browse pydantic-ai
-doc-hub docs read pydantic-ai abc123
+doc-hub docs browse --corpus pydantic-ai
+doc-hub docs read --corpus pydantic-ai abc123
 .fi
 .RE
 .PP
@@ -131,8 +131,8 @@ Browse and read with JSON metadata:
 .PP
 .RS
 .nf
-doc-hub docs browse pydantic-ai --json
-doc-hub docs read pydantic-ai abc123 --json --max-content-chars 4000
+doc-hub docs browse --corpus pydantic-ai --json
+doc-hub docs read --corpus pydantic-ai abc123 --json --max-content-chars 4000
 .fi
 .RE
 .PP

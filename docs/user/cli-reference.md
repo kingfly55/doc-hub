@@ -60,7 +60,7 @@ doc-hub docs list --json
 List indexed versions and aliases for a corpus.
 
 ```bash
-doc-hub docs versions CORPUS [--json]
+doc-hub docs versions --corpus CORPUS [--json]
 ```
 
 Use this before strict version searches when more than one documentation snapshot is available.
@@ -69,10 +69,10 @@ Use this before strict version searches when more than one documentation snapsho
 
 ```bash
 # Show human-readable version aliases and snapshots
-doc-hub docs versions react
+doc-hub docs versions --corpus react
 
 # Machine-readable version metadata
-doc-hub docs versions react --json
+doc-hub docs versions --corpus react --json
 ```
 
 ---
@@ -82,7 +82,7 @@ doc-hub docs versions react --json
 Browse the persisted document hierarchy for a corpus.
 
 ```bash
-doc-hub docs browse CORPUS [options]
+doc-hub docs browse --corpus CORPUS [options]
 ```
 
 ### Flags
@@ -97,30 +97,30 @@ doc-hub docs browse CORPUS [options]
 
 ### Output
 
-Human-readable mode prints the corpus slug followed by an indented preorder tree. Group nodes are marked with `[group]`. Concrete documents include a stable short document ID in brackets plus total character count and section count. Use that short ID with `doc-hub docs read` when you do not want to type the full path.
+Human-readable mode prints the corpus slug followed by either the full tree or, for large corpora, an overview frontier chosen to fit the token budget. Overview mode prefers informative areas over generic wrappers and includes drilldown paths plus representative child labels to reduce follow-up turns. Concrete documents include a stable short document ID in brackets plus total character count and section count. Use that short ID with `doc-hub docs read` when you do not want to type the full path.
 
 ### Examples
 
 ```bash
 # Browse the whole corpus
-doc-hub docs browse pydantic-ai
+doc-hub docs browse --corpus pydantic-ai
 
 # Browse just one subtree
-doc-hub docs browse pydantic-ai --path api
+doc-hub docs browse --corpus pydantic-ai --path api
 
 # Browse a specific version
-doc-hub docs browse react --version 18
-doc-hub docs browse react@18
+doc-hub docs browse --corpus react --version 18
+doc-hub docs browse --corpus react@18
 
 # Limit subtree depth
-doc-hub docs browse pydantic-ai --path api --depth 1
+doc-hub docs browse --corpus pydantic-ai --path api --depth 1
 
 # Use the short ID shown in browse output with read
 # Example browse line: Install [abc123] 12,345 chars  3 sections
-doc-hub docs read pydantic-ai abc123
+doc-hub docs read --corpus pydantic-ai abc123
 
 # Machine-readable output
-doc-hub docs browse pydantic-ai --json
+doc-hub docs browse --corpus pydantic-ai --json
 ```
 
 ---
@@ -130,7 +130,7 @@ doc-hub docs browse pydantic-ai --json
 Read a document from a corpus by its short document ID.
 
 ```bash
-doc-hub docs read CORPUS DOC_ID [options]
+doc-hub docs read --corpus CORPUS DOC_ID [options]
 ```
 
 ### Flags
@@ -147,15 +147,15 @@ doc-hub docs read CORPUS DOC_ID [options]
 
 ```bash
 # Browse to find a document ID, then read it
-doc-hub docs browse pydantic-ai
-doc-hub docs read pydantic-ai abc123
+doc-hub docs browse --corpus pydantic-ai
+doc-hub docs read --corpus pydantic-ai abc123
 
 # Read a document from a specific version
-doc-hub docs browse react@18
+doc-hub docs browse --corpus react@18
 doc-hub docs read react@18 abc123
 
 # Machine-readable output
-doc-hub docs read pydantic-ai abc123 --json
+doc-hub docs read --corpus pydantic-ai abc123 --json
 ```
 
 ---

@@ -8,6 +8,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 
 def test_browse_main_importable():
     from doc_hub.browse import browse_main
@@ -124,12 +126,71 @@ def test_render_tree_preserves_input_order():
     assert _render_tree(nodes).splitlines() == ["Second [group]", "First [group]"]
 
 
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [(None, 1500), ("900", 900)],
+)
+def test_get_browse_output_token_limit(monkeypatch, env_value, expected):
+    from doc_hub.browse import get_browse_output_token_limit
+
+    if env_value is None:
+        monkeypatch.delenv("DOC_HUB_BROWSE_MAX_TOKENS", raising=False)
+    else:
+        monkeypatch.setenv("DOC_HUB_BROWSE_MAX_TOKENS", env_value)
+
+    assert get_browse_output_token_limit() == expected
+
+
+def test_get_browse_output_token_limit_rejects_invalid_value(monkeypatch):
+    from doc_hub.browse import get_browse_output_token_limit
+
+    monkeypatch.setenv("DOC_HUB_BROWSE_MAX_TOKENS", "abc")
+    with pytest.raises(ValueError, match="DOC_HUB_BROWSE_MAX_TOKENS"):
+        get_browse_output_token_limit()
+
+
+def test_build_browse_view_uses_summary_mode_for_large_tree():
+    from doc_hub.browse import _build_browse_view
+
+    nodes = [
+        {"doc_path": "docs", "title": "Docs", "depth": 0, "is_group": True, "children_count": 3, "section_count": 0, "total_chars": 0},
+        {"doc_path": "docs/api", "title": "API", "depth": 1, "is_group": True, "children_count": 3, "section_count": 0, "total_chars": 0},
+        {"doc_path": "docs/guides", "title": "Guides", "depth": 1, "is_group": True, "children_count": 2, "section_count": 0, "total_chars": 0},
+        {"doc_path": "docs/api/a", "title": "A" * 1200, "depth": 2, "is_group": False, "doc_id": "aaa111", "section_count": 2, "total_chars": 100},
+        {"doc_path": "docs/api/b", "title": "B" * 1200, "depth": 2, "is_group": False, "doc_id": "bbb222", "section_count": 2, "total_chars": 100},
+        {"doc_path": "docs/guides/c", "title": "C" * 1200, "depth": 2, "is_group": False, "doc_id": "ccc333", "section_count": 2, "total_chars": 100},
+    ]
+
+    view = _build_browse_view("demo", "legacy", nodes, path=None, max_output_tokens=40, full=False)
+
+    assert view["mode"] == "overview"
+    assert view["truncated"] is True
+    assert "docs" in view["expanded_paths"]
+    assert view["documents"]
+    assert all(node["overview_mode"] is True for node in view["documents"])
+    assert any(node["title"] in {"API", "Guides"} or len(node["title"]) > 100 for node in view["documents"])
+    assert "drill in with" in view["hint"]
+
+
+def test_build_browse_view_returns_full_when_forced():
+    from doc_hub.browse import _build_browse_view
+
+    nodes = [
+        {"doc_path": "guide/intro", "title": "Intro", "depth": 1, "is_group": False, "doc_id": "abc123", "section_count": 2, "total_chars": 100}
+    ]
+
+    view = _build_browse_view("demo", "legacy", nodes, path=None, max_output_tokens=1, full=True)
+
+    assert view["mode"] == "full"
+    assert view["truncated"] is False
+    assert view["documents"] == nodes
+
 
 def test_browse_main_uses_load_dotenv_and_asyncio_run():
     from doc_hub import browse as browse_module
 
     argv = ["demo-corpus"]
-    parsed_args = argparse.Namespace(corpus="demo-corpus", path=None, depth=None, version=None, json=False)
+    parsed_args = argparse.Namespace(corpus="demo-corpus", path=None, depth=None, version=None, max_output_tokens=1500, full=False, json=False)
 
     with (
         patch.object(browse_module, "load_dotenv") as mock_load_dotenv,
@@ -182,7 +243,7 @@ def test_read_main_uses_load_dotenv_and_asyncio_run():
 def test_browse_async_missing_corpus_raises_clear_error():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="gastown", path=None, depth=None, version=None, json=True)
+    args = argparse.Namespace(corpus="gastown", path=None, depth=None, version=None, max_output_tokens=1500, full=False, json=True)
     pool = MagicMock()
 
     with (
@@ -203,7 +264,7 @@ def test_browse_async_missing_corpus_raises_clear_error():
 def test_browse_async_json_output():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", path="guides", depth=1, version=None, json=True)
+    args = argparse.Namespace(corpus="demo", path="guides", depth=1, version=None, max_output_tokens=1500, full=False, json=True)
     pool = MagicMock()
     nodes = [
         {"title": "Guides", "depth": 0, "is_group": True, "total_chars": 0, "section_count": 0},
@@ -224,7 +285,20 @@ def test_browse_async_json_output():
         asyncio.run(browse_module.browse(args))
 
     mock_get_tree.assert_awaited_once_with(pool, "demo", path="guides", max_depth=1, snapshot_id="legacy")
-    assert json.loads(stdout.getvalue()) == {"corpus": "demo", "snapshot_id": "legacy", "documents": nodes}
+    assert json.loads(stdout.getvalue()) == {
+        "corpus": "demo",
+        "snapshot_id": "legacy",
+        "path": "guides",
+        "mode": "full",
+        "truncated": False,
+        "total_nodes": 2,
+        "displayed_nodes": 2,
+        "omitted_immediate_entries": 0,
+        "auto_expanded_path": None,
+        "expanded_paths": [],
+        "hint": None,
+        "documents": nodes,
+    }
 
 
 def test_read_not_found_prints_message_and_returns_successfully():

@@ -12,15 +12,28 @@ def test_unified_cli_importable():
     assert callable(main)
 
 
-def test_top_level_groups_parse():
+def test_top_level_groups_parse(monkeypatch):
     from doc_hub.cli.main import build_parser
 
+    monkeypatch.setenv("DOC_HUB_BROWSE_MAX_TOKENS", "1500")
     parser = build_parser()
-    args = parser.parse_args(["docs", "browse", "demo"])
+    args = parser.parse_args(["docs", "browse", "--corpus", "demo"])
 
     assert args.command_group == "docs"
     assert args.docs_command == "browse"
     assert args.corpus == "demo"
+    assert args.max_output_tokens == 1500
+
+
+def test_browse_parse_accepts_token_override(monkeypatch):
+    from doc_hub.cli.main import build_parser
+
+    monkeypatch.setenv("DOC_HUB_BROWSE_MAX_TOKENS", "1500")
+    parser = build_parser()
+    args = parser.parse_args(["docs", "browse", "--corpus", "demo", "--max-output-tokens", "900", "--full"])
+
+    assert args.max_output_tokens == 900
+    assert args.full is True
 
 
 def test_docs_list_emits_human_readable_output(capsys):
@@ -90,7 +103,7 @@ def test_docs_versions_routes_to_versions_handler():
     from doc_hub.cli.main import main
 
     with patch("doc_hub.cli.docs.handle_versions") as mock_handler:
-        main(["docs", "versions", "pydantic-ai"])
+        main(["docs", "versions", "--corpus", "pydantic-ai"])
 
     mock_handler.assert_called_once()
 
@@ -114,7 +127,7 @@ def test_man_prints_bundled_manpage(capsys):
     assert "doc-hub docs list" in out
     assert "doc-hub man" in out
     assert "doc-hub docs search --corpus pydantic-ai \"retry logic\"" in out
-    assert "doc-hub docs read pydantic-ai abc123" in out
+    assert "doc-hub docs read --corpus pydantic-ai abc123" in out
     assert "doc-hub serve mcp" in out
     assert "ENVIRONMENT" in out
 

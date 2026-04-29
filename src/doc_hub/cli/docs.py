@@ -227,7 +227,7 @@ def register_docs_group(subparsers: argparse._SubParsersAction) -> None:
     list_parser.set_defaults(handler=handle_list)
 
     versions_parser = docs_subparsers.add_parser("versions", help="List versions for a corpus")
-    versions_parser.add_argument("corpus", help="Corpus slug")
+    versions_parser.add_argument("--corpus", required=True, help="Corpus slug")
     versions_parser.add_argument("--json", action="store_true", help="Emit JSON output")
     versions_parser.set_defaults(handler=handle_versions)
 
