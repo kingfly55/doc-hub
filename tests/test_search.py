@@ -7,8 +7,7 @@ The embedder plugin and asyncpg pool are mocked throughout.
 from __future__ import annotations
 
 import argparse
-import asyncio
-from dataclasses import asdict
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -203,6 +202,86 @@ class TestSearchResult:
             doc_path="test",
         )
         assert r.source_file == "test.md"
+
+
+def test_search_result_to_dict_includes_agent_fields():
+    from doc_hub.search import search_result_to_dict
+
+    r = SearchResult(
+        id=7,
+        corpus_id="demo",
+        heading="Setup",
+        section_path="Guide > Setup",
+        content="abcdef",
+        source_url="https://example.com/setup",
+        score=0.03,
+        similarity=0.82,
+        category="guide",
+        start_line=3,
+        end_line=9,
+        source_file="guide__setup.md",
+        doc_path="guide/setup",
+        snapshot_id="snap-1",
+        source_version="1.0",
+    )
+
+    payload = search_result_to_dict(r, max_content_chars=3)
+
+    assert payload["id"] == 7
+    assert payload["chunk_id"] == 7
+    assert payload["doc_path"] == "guide/setup"
+    assert payload["read_target"] == {"corpus": "demo", "doc_id": payload["doc_id"], "version": "1.0"}
+    assert payload["line_range"] == {"start": 3, "end": 9}
+    assert payload["content"] == "abc"
+    assert payload["content_truncated"] is True
+    assert payload["original_content_chars"] == 6
+
+
+def test_build_search_response_v2_shape():
+    import argparse
+    from doc_hub.search import build_search_response
+
+    args = argparse.Namespace(
+        query="setup",
+        corpora=["demo"],
+        categories=None,
+        exclude_categories=None,
+        version="1.0",
+        versions=None,
+        all_versions=False,
+        source_url_prefix=None,
+        section_path_prefix=None,
+        min_similarity=0.55,
+        limit=3,
+        offset=0,
+        max_content_chars=1000,
+    )
+    result = SearchResult(
+        id=1,
+        corpus_id="demo",
+        heading="Setup",
+        section_path="Guide > Setup",
+        content="Install it.",
+        source_url="https://example.com/setup",
+        score=0.04,
+        similarity=0.9,
+        category="guide",
+        start_line=1,
+        end_line=2,
+        source_file="guide__setup.md",
+        doc_path="guide/setup",
+        snapshot_id="snap-1",
+        source_version="1.0",
+    )
+
+    payload = build_search_response(args, [result], {"corpora": ["demo"], "searched_versions": []})
+
+    assert payload["status"] == "success"
+    assert payload["query"] == "setup"
+    assert payload["result_count"] == 1
+    assert payload["results"][0]["chunk_id"] == 1
+    assert payload["diagnostics"]["has_version_scope"] is True
+    assert payload["suggested_next_action"] == "answer_from_results"
 
 
 # ---------------------------------------------------------------------------
@@ -939,6 +1018,59 @@ class TestCLIParsing:
         args = parser.parse_args(["--corpus", "pydantic-ai", "--all-versions", "retry logic"])
 
         assert args.all_versions is True
+
+    def test_handle_search_args_emits_v2_json_object(self, capsys):
+        from doc_hub.search import SearchResult, handle_search_args
+
+        args = argparse.Namespace(
+            query="retry logic",
+            corpora=["pydantic-ai"],
+            categories=None,
+            exclude_categories=None,
+            limit=5,
+            offset=0,
+            min_similarity=0.55,
+            source_url_prefix=None,
+            section_path_prefix=None,
+            version=None,
+            versions=None,
+            all_versions=False,
+            vector_limit=None,
+            text_limit=None,
+            rrfk=None,
+            language=None,
+            json=True,
+            schema="v2",
+            json_object=False,
+            max_content_chars=4,
+        )
+        result = SearchResult(
+            id=1,
+            corpus_id="pydantic-ai",
+            heading="Retry",
+            section_path="Guide > Retry",
+            content="abcdef",
+            source_url="https://example.com/retry",
+            score=0.04,
+            similarity=0.9,
+            category="guide",
+            start_line=1,
+            end_line=3,
+            source_file="guide__retry.md",
+            doc_path="guide/retry",
+            snapshot_id="snap-1",
+            source_version="1.0",
+        )
+
+        with patch("doc_hub.search.search_docs_sync", return_value=([result], {"corpora": ["pydantic-ai"], "searched_versions": []})):
+            handle_search_args(args)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "success"
+        assert payload["result_count"] == 1
+        assert payload["results"][0]["content"] == "abcd"
+        assert payload["results"][0]["content_truncated"] is True
+        assert payload["results"][0]["read_target"]["doc_id"] == payload["results"][0]["doc_id"]
 
 
 class TestCLIMain:

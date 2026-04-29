@@ -138,9 +138,10 @@ doc-hub docs read CORPUS DOC_ID [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `corpus` | string | **required** | Corpus slug containing the document. May include an inline version as `CORPUS@VERSION`. |
-| `doc_id` | string | **required** | Short document ID from `doc-hub docs browse` output (e.g. `abc123`). IDs are snapshot-scoped. |
+| `doc_id` | string | **required** | Short document ID from `doc-hub docs browse` or `doc-hub docs search` output (e.g. `abc123`). IDs are snapshot-scoped. |
 | `--version VERSION` | string | default/latest | Version selector to read. Mutually exclusive with `CORPUS@VERSION`. |
-| `--json` | flag | false | Emit the same structured payload shape as the MCP read tool, including `snapshot_id`. |
+| `--json` | flag | false | Emit structured JSON with citation metadata, `snapshot_id`, `doc_id`, section line metadata, and provenance. |
+| `--max-content-chars N` | int | -1 | Maximum content characters in JSON output. Use `-1` for full content. |
 
 ### Examples
 
@@ -187,7 +188,10 @@ doc-hub docs search --corpus SLUG [--corpus SLUG ...] QUERY [options]
 | `--version VERSION` | string | default/latest | Strictly search this version for each requested corpus. Mutually exclusive with inline `SLUG@VERSION`, `--versions`, and `--all-versions`. |
 | `--versions V1,V2` | string | none | Strictly search this comma-separated version set for each requested corpus. |
 | `--all-versions` | flag | false | Search every indexed version for each requested corpus. This is opt-in and can be more expensive/noisy. |
-| `--json` | flag | false | Output results as JSON instead of the default human-readable format. Results include `snapshot_id` and `source_version`. |
+| `--json` | flag | false | Output results as JSON instead of the default human-readable format. |
+| `--schema {v1,v2}` | choice | `v1` | JSON schema version for `--json`. Use `v2` for structured agent responses. |
+| `--json-object` | flag | false | Emit the structured v2 JSON object; equivalent to `--json --schema v2`. |
+| `--max-content-chars N` | int | 1000 | Maximum content characters per JSON result. Use `-1` for full content. |
 
 ### Examples
 
@@ -209,9 +213,21 @@ doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 # Filter to API reference only
 doc-hub docs search --corpus pydantic-ai "Agent" --category api --limit 10
 
-# Machine-readable output
+# Machine-readable v1 array output
 doc-hub docs search --corpus pydantic-ai "validators" --json
+
+# Structured agent response with diagnostics and read targets
+doc-hub docs list --json
+doc-hub docs search --corpus pydantic-ai "validators" --json --schema v2 --limit 3 --max-content-chars 1000
 ```
+
+### Structured search JSON
+
+`--json --schema v2` wraps results in an object with `status`, `query`, `retrieved_at`, `invocation`, `executed_queries`, `result_count`, `results`, `diagnostics`, and `suggested_next_action`.
+
+Each result includes `id`, `chunk_id`, `corpus_id`, `doc_id`, `doc_path`, `read_target`, `heading`, `section_path`, `source_url`, `source_version`, `snapshot_id`, `score`, `similarity`, `category`, `start_line`, `end_line`, `line_range`, `content`, `content_truncated`, and `original_content_chars`.
+
+`suggested_next_action` is deterministic and may be `answer_from_results`, `read_top_doc`, `broaden_search`, `try_category_api`, `try_category_guide`, `lower_min_similarity`, or `no_results`.
 
 ---
 

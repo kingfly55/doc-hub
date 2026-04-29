@@ -252,7 +252,7 @@ def test_read_not_found_prints_message_and_returns_successfully():
 def test_read_json_full_output():
     from doc_hub import browse as browse_module
 
-    args = argparse.Namespace(corpus="demo", doc_id="abc123", version=None, json=True)
+    args = argparse.Namespace(corpus="demo", doc_id="abc123", version=None, json=True, max_content_chars=-1)
     pool = MagicMock()
     chunks = [
         {"heading": "Title", "heading_level": 1, "section_path": "Title", "char_count": 5, "source_url": "https://example.com/doc", "content": "First"},
@@ -275,8 +275,14 @@ def test_read_json_full_output():
     payload = json.loads(stdout.getvalue())
     assert payload["mode"] == "full"
     assert payload["content"] == "First\n\nSecond"
+    assert payload["corpus"] == "demo"
+    assert payload["doc_id"] == "abc123"
     assert payload["doc_path"] == "guide/large"
     assert payload["snapshot_id"] == "legacy"
+    assert payload["line_range"] is None
+    assert payload["content_truncated"] is False
+    assert payload["original_content_chars"] == len("First\n\nSecond")
+    assert payload["invocation"]["tool"] == "doc-hub docs read"
     mock_get_chunks.assert_awaited_once_with(pool, "demo", "abc123", snapshot_id="legacy")
 
 

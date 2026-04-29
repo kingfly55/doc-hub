@@ -41,6 +41,14 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["workers"] = args.workers
         if args.retries is not None:
             config["retries"] = args.retries
+        if getattr(args, "url_excludes", None):
+            raw = args.url_excludes
+            if isinstance(raw, str):
+                config["url_excludes"] = [p.strip() for p in raw.split(",") if p.strip()]
+            else:
+                config["url_excludes"] = list(raw)
+        if getattr(args, "url_exclude_pattern", None):
+            config["url_exclude_pattern"] = args.url_exclude_pattern
         if getattr(args, "url_suffix", None):
             config["url_suffix"] = args.url_suffix
         if getattr(args, "use_jina", False):
@@ -59,6 +67,14 @@ def build_fetch_config(strategy: str, args: argparse.Namespace) -> dict:
             config["workers"] = args.workers
         if args.retries is not None:
             config["retries"] = args.retries
+        if getattr(args, "url_excludes", None):
+            raw = args.url_excludes
+            if isinstance(raw, str):
+                config["url_excludes"] = [p.strip() for p in raw.split(",") if p.strip()]
+            else:
+                config["url_excludes"] = list(raw)
+        if getattr(args, "url_exclude_pattern", None):
+            config["url_exclude_pattern"] = args.url_exclude_pattern
         if getattr(args, "clean", False):
             config["clean"] = True
 
@@ -466,6 +482,8 @@ def register_pipeline_group(subparsers: argparse._SubParsersAction) -> None:
     add_parser.add_argument("--url", default=None, help="URL for llms_txt, sitemap, or git_repo strategies")
     add_parser.add_argument("--path", default=None, help="Local directory path for local_dir strategy")
     add_parser.add_argument("--url-pattern", default=None, help="Regex to filter doc URLs (llms_txt)")
+    add_parser.add_argument("--url-excludes", default=None, help="Comma-separated corpus-relative URL paths to skip (llms_txt, sitemap)")
+    add_parser.add_argument("--url-exclude-pattern", default=None, help="Regex matched against corpus-relative URL paths to skip (llms_txt, sitemap)")
     add_parser.add_argument("--url-suffix", default=None, help="Suffix appended to each extracted URL, e.g. '.md' (llms_txt)")
     add_parser.add_argument("--base-url", default=None, help="Base URL for filename generation (llms_txt)")
     add_parser.add_argument("--url-prefix", default=None, help="Only fetch URLs starting with this prefix (sitemap)")

@@ -756,7 +756,31 @@ async def get_default_snapshot_id(pool: asyncpg.Pool, corpus_id: str) -> str:
         """,
         corpus_id,
     )
-    return str(newest) if newest else "legacy"
+    if newest:
+        return str(newest)
+    indexed_snapshot = await pool.fetchval(
+        """
+        SELECT snapshot_id
+        FROM doc_documents
+        WHERE corpus_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        corpus_id,
+    )
+    if indexed_snapshot:
+        return str(indexed_snapshot)
+    chunk_snapshot = await pool.fetchval(
+        """
+        SELECT snapshot_id
+        FROM doc_chunks
+        WHERE corpus_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        corpus_id,
+    )
+    return str(chunk_snapshot) if chunk_snapshot else "legacy"
 
 
 async def resolve_version_selector(pool: asyncpg.Pool, corpus_id: str, selector: str) -> str | None:

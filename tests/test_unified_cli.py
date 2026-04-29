@@ -255,6 +255,8 @@ def test_pipeline_add_parses_llms_txt_args():
         "pipeline", "add", "Pydantic AI",
         "--strategy", "llms_txt",
         "--url", "https://ai.pydantic.dev/llms.txt",
+        "--url-excludes", "api/reference/,openapi/",
+        "--url-exclude-pattern", r"external/.*\.yml$",
     ])
 
     assert args.command_group == "pipeline"
@@ -262,6 +264,8 @@ def test_pipeline_add_parses_llms_txt_args():
     assert args.name == "Pydantic AI"
     assert args.strategy == "llms_txt"
     assert args.url == "https://ai.pydantic.dev/llms.txt"
+    assert args.url_excludes == "api/reference/,openapi/"
+    assert args.url_exclude_pattern == r"external/.*\.yml$"
     assert args.slug is None
     assert args.no_index is False
 
@@ -329,6 +333,8 @@ def test_pipeline_add_builds_config_and_upserts_llms_txt():
         base_url=None,
         workers=None,
         retries=None,
+        url_excludes=None,
+        url_exclude_pattern=None,
         branch=None,
         docs_dir=None,
         extensions=None,
@@ -348,6 +354,8 @@ def test_pipeline_add_builds_config_llms_txt_with_optionals():
         base_url="https://ai.pydantic.dev/",
         workers=10,
         retries=5,
+        url_excludes="api/reference/,openapi/",
+        url_exclude_pattern=r"external/.*\.yml$",
         branch=None,
         docs_dir=None,
         extensions=None,
@@ -360,6 +368,8 @@ def test_pipeline_add_builds_config_llms_txt_with_optionals():
         "base_url": "https://ai.pydantic.dev/",
         "workers": 10,
         "retries": 5,
+        "url_excludes": ["api/reference/", "openapi/"],
+        "url_exclude_pattern": r"external/.*\.yml$",
     }
 
 
@@ -373,6 +383,8 @@ def test_pipeline_add_builds_config_local_dir():
         base_url=None,
         workers=None,
         retries=None,
+        url_excludes=None,
+        url_exclude_pattern=None,
         branch=None,
         docs_dir=None,
         extensions=None,
@@ -392,6 +404,8 @@ def test_pipeline_add_builds_config_git_repo():
         base_url=None,
         workers=None,
         retries=None,
+        url_excludes=None,
+        url_exclude_pattern=None,
         branch="main",
         docs_dir="docs",
         extensions=None,
@@ -416,13 +430,19 @@ def test_pipeline_add_builds_config_sitemap():
         base_url=None,
         workers=None,
         retries=None,
+        url_excludes="api/,drafts/",
+        url_exclude_pattern=r"legacy/.*$",
         branch=None,
         docs_dir=None,
         extensions=None,
         path_excludes=None,
         path_exclude_pattern=None,
     ))
-    assert config == {"url": "https://example.com/sitemap.xml"}
+    assert config == {
+        "url": "https://example.com/sitemap.xml",
+        "url_excludes": ["api/", "drafts/"],
+        "url_exclude_pattern": r"legacy/.*$",
+    }
 
 
 def test_pipeline_add_missing_url_raises():
@@ -436,6 +456,8 @@ def test_pipeline_add_missing_url_raises():
             base_url=None,
             workers=None,
             retries=None,
+            url_excludes=None,
+            url_exclude_pattern=None,
             branch=None,
             docs_dir=None,
             extensions=None,
@@ -458,6 +480,8 @@ def test_pipeline_add_missing_path_raises():
             base_url=None,
             workers=None,
             retries=None,
+            url_excludes=None,
+            url_exclude_pattern=None,
             branch=None,
             docs_dir=None,
             extensions=None,

@@ -10,6 +10,8 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
@@ -87,7 +89,11 @@ async def read(args: argparse.Namespace) -> None:
         snapshot_id = await _resolve_snapshot_id(pool, corpus, version)
         doc_path, chunks = await get_document_chunks_by_doc_id(pool, corpus, args.doc_id, snapshot_id=snapshot_id)
         if doc_path is None or not chunks:
-            print(f"Document '{args.doc_id}' not found in corpus '{corpus}' at snapshot '{snapshot_id}'")
+            message = f"Document '{args.doc_id}' not found in corpus '{corpus}' at snapshot '{snapshot_id}'"
+            if args.json:
+                print(json.dumps({"error": message}, indent=2), file=sys.stderr)
+                raise SystemExit(1)
+            print(message)
             return
 
         title = next(
@@ -97,16 +103,45 @@ async def read(args: argparse.Namespace) -> None:
         source_url = str(chunks[0].get("source_url", ""))
         total_chars = sum(int(chunk.get("char_count", 0)) for chunk in chunks)
         section_count = len(chunks)
+        content = "\n\n".join(str(chunk.get("content", "")) for chunk in chunks)
+        original_content_chars = len(content)
+        max_content_chars = args.max_content_chars
+        content_truncated = max_content_chars is not None and max_content_chars >= 0 and len(content) > max_content_chars
+        if content_truncated:
+            content = content[:max_content_chars]
+        line_starts = [int(chunk.get("start_line", 0)) for chunk in chunks if chunk.get("start_line") is not None]
+        line_ends = [int(chunk.get("end_line", 0)) for chunk in chunks if chunk.get("end_line") is not None]
 
         payload = {
             "mode": "full",
+            "corpus": corpus,
+            "doc_id": args.doc_id,
             "doc_path": doc_path,
             "title": title,
-            "content": "\n\n".join(str(chunk.get("content", "")) for chunk in chunks),
+            "content": content,
             "source_url": source_url,
             "snapshot_id": snapshot_id,
+            "source_version": version,
+            "retrieved_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "line_range": {"start": min(line_starts), "end": max(line_ends)} if line_starts and line_ends else None,
+            "sections": [
+                {
+                    "heading": chunk.get("heading"),
+                    "section_path": chunk.get("section_path"),
+                    "line_range": {"start": chunk.get("start_line"), "end": chunk.get("end_line")},
+                    "category": chunk.get("category"),
+                }
+                for chunk in chunks
+            ],
+            "invocation": {
+                "tool": "doc-hub docs read",
+                "argv": sys.argv[1:] if sys.argv else None,
+                "cwd": None,
+            },
             "total_chars": total_chars,
             "section_count": section_count,
+            "content_truncated": content_truncated,
+            "original_content_chars": original_content_chars,
         }
         if args.json:
             print(json.dumps(payload, indent=2))
@@ -137,9 +172,15 @@ def build_read_parser(parser: argparse.ArgumentParser | None = None) -> argparse
         description="Read a document from a corpus.",
     )
     parser.add_argument("corpus", help="Corpus slug containing the document")
-    parser.add_argument("doc_id", help="Document ID shown in doc-hub docs browse output")
+    parser.add_argument("doc_id", help="Document ID shown in doc-hub docs search or browse output")
     parser.add_argument("--version", help="Version selector to read")
     parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    parser.add_argument(
+        "--max-content-chars",
+        type=int,
+        default=-1,
+        help="Maximum characters of content in JSON output; use -1 for full content (default: -1).",
+    )
     return parser
 
 

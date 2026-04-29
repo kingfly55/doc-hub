@@ -336,6 +336,18 @@ def test_version_tables_ddl_present():
     assert "PRIMARY KEY (corpus_id, alias)" in _VERSION_ALIASES_DDL
 
 
+@pytest.mark.asyncio
+async def test_get_default_snapshot_id_falls_back_to_indexed_documents():
+    from doc_hub.db import get_default_snapshot_id
+
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(side_effect=[None, None, "sha256-demo"])
+
+    assert await get_default_snapshot_id(pool, "telnyx") == "sha256-demo"
+
+    assert pool.fetchval.await_args_list[2].args[1] == "telnyx"
+
+
 def test_ddl_heading_before_tsv(monkeypatch):
     """Verify heading and content are defined before tsv in CREATE TABLE DDL."""
     monkeypatch.delenv("DOC_HUB_VECTOR_DIM", raising=False)

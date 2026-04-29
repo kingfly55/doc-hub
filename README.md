@@ -97,8 +97,11 @@ doc-hub pipeline run --corpus pydantic-ai
 ```bash
 doc-hub docs search --corpus pydantic-ai "how do I handle retries?"
 
-# Search multiple corpora
+# Agent-oriented structured output
+doc-hub docs list --json
+doc-hub docs search --corpus pydantic-ai "how do I handle retries?" --json --schema v2
 
+# Search multiple corpora
 doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 ```
 
@@ -109,7 +112,7 @@ doc-hub docs search --corpus pydantic-ai --corpus fastapi "retry middleware"
 | `doc-hub man` | Print the built-in manual page |
 | `doc-hub docs list` | List registered corpora |
 | `doc-hub docs browse` | Browse the persisted document hierarchy for a corpus, including short document IDs |
-| `doc-hub docs read` | Read a document by its short document ID (from browse output) |
+| `doc-hub docs read` | Read a document by its short document ID (from browse or search output) |
 | `doc-hub docs search` | Hybrid search CLI across one or more required `--corpus` values |
 | `doc-hub pipeline add` | Register and index a new corpus. Use `--interactive`/`-i` for guided setup, or pass `--strategy` and `--url` directly. |
 | `doc-hub pipeline remove` | Remove a corpus and all its data (requires user password) |

@@ -37,9 +37,10 @@ ruff check src/
 
 # CLI entry points
 doc-hub pipeline run --corpus <slug> [--stage fetch|parse|embed|index|tree] [--clean] [--skip-download] [--full-reindex]
-doc-hub docs search "<query>" [--corpus <slug>] [--category <cat>] [--limit N]
-doc-hub docs browse <slug>
-doc-hub docs read <slug> <doc_path>
+doc-hub docs list --json
+doc-hub docs search --corpus <slug> "<query>" --json --schema v2
+doc-hub docs browse <slug> --json
+doc-hub docs read <slug> <doc_id> --json
 doc-hub serve mcp          # start MCP server
 doc-hub pipeline eval      # run retrieval eval
 doc-hub pipeline sync-all  # index all enabled corpora

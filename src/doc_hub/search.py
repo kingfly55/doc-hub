@@ -31,7 +31,9 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import asyncpg  # type: ignore[import]
@@ -522,7 +524,8 @@ async def _search_docs_with_pool(
     versions: list[str] | None = None,
     all_versions: bool = False,
     config: SearchConfig | None = None,
-) -> list[SearchResult]:
+    return_scope: bool = False,
+) -> list[SearchResult] | tuple[list[SearchResult], dict[str, Any] | None]:
     """Create a pool, run search_docs(), close pool, and return results."""
     from doc_hub.db import create_pool  # local import to avoid circular at module level
 
@@ -530,6 +533,7 @@ async def _search_docs_with_pool(
     try:
         snapshot_ids = None
         snapshot_scope_keys = None
+        scope = None
         if corpora:
             from doc_hub.corpora import validate_corpora_available
 
@@ -538,7 +542,7 @@ async def _search_docs_with_pool(
             snapshot_ids = scope["snapshot_ids"]
             snapshot_scope_keys = scope["snapshot_scope_keys"]
             await validate_corpora_available(pool, corpora)
-        return await search_docs(
+        results = await search_docs(
             query,
             pool=pool,
             embedder=embedder,
@@ -554,6 +558,9 @@ async def _search_docs_with_pool(
             snapshot_scope_keys=snapshot_scope_keys,
             config=config,
         )
+        if return_scope:
+            return results, scope
+        return results
     finally:
         await pool.close()
 
@@ -573,7 +580,8 @@ def search_docs_sync(
     versions: list[str] | None = None,
     all_versions: bool = False,
     config: SearchConfig | None = None,
-) -> list[SearchResult]:
+    return_scope: bool = False,
+) -> list[SearchResult] | tuple[list[SearchResult], dict[str, Any] | None]:
     """Synchronous wrapper around search_docs for use in non-async contexts.
 
     Creates a temporary pool, runs the search, and closes the pool.
@@ -600,6 +608,7 @@ def search_docs_sync(
             versions=versions,
             all_versions=all_versions,
             config=config,
+            return_scope=return_scope,
         )
     )
 
@@ -607,6 +616,117 @@ def search_docs_sync(
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
+
+def _truncate_content(content: str, max_content_chars: int | None) -> tuple[str, bool, int]:
+    original_length = len(content)
+    if max_content_chars is None or max_content_chars < 0 or original_length <= max_content_chars:
+        return content, False, original_length
+    return content[:max_content_chars], True, original_length
+
+
+def search_result_to_dict(result: SearchResult, *, max_content_chars: int | None = None) -> dict[str, Any]:
+    from doc_hub.documents import derive_doc_id, doc_path_from_source_file
+
+    doc_path = result.doc_path or doc_path_from_source_file(result.source_file)
+    doc_id = derive_doc_id(result.corpus_id, doc_path, snapshot_id=result.snapshot_id)
+    content, content_truncated, original_content_chars = _truncate_content(result.content, max_content_chars)
+    return {
+        "id": result.id,
+        "chunk_id": result.id,
+        "corpus_id": result.corpus_id,
+        "doc_id": doc_id,
+        "doc_path": doc_path,
+        "read_target": {
+            "corpus": result.corpus_id,
+            "doc_id": doc_id,
+            "version": result.source_version,
+        },
+        "heading": result.heading,
+        "section_path": result.section_path,
+        "source_url": result.source_url,
+        "snapshot_id": result.snapshot_id,
+        "source_version": result.source_version,
+        "score": result.score,
+        "similarity": result.similarity,
+        "category": result.category,
+        "start_line": result.start_line,
+        "end_line": result.end_line,
+        "line_range": {"start": result.start_line, "end": result.end_line},
+        "content": content,
+        "content_truncated": content_truncated,
+        "original_content_chars": original_content_chars,
+    }
+
+
+def build_search_diagnostics(results: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
+    top_result = results[0] if results else {}
+    top_similarity = top_result.get("similarity")
+    top_score = top_result.get("score")
+    return {
+        "top_similarity": top_similarity,
+        "top_score": top_score,
+        "low_confidence": not results or bool(top_similarity is not None and 0 < top_similarity < args.min_similarity + 0.1),
+        "has_version_scope": bool(args.version or args.versions or args.all_versions or any("@" in corpus for corpus in args.corpora)),
+        "categories_returned": sorted({str(result["category"]) for result in results if result.get("category")}),
+        "corpora_returned": sorted({str(result["corpus_id"]) for result in results if result.get("corpus_id")}),
+        "content_truncated_count": sum(1 for result in results if result.get("content_truncated")),
+        "notes": [],
+    }
+
+
+def suggest_next_action(results: list[dict[str, Any]], diagnostics: dict[str, Any], args: argparse.Namespace) -> str:
+    if not results:
+        return "no_results"
+    if results[0].get("content_truncated"):
+        return "read_top_doc"
+    top_similarity = diagnostics.get("top_similarity")
+    if top_similarity is not None and top_similarity >= max(args.min_similarity, 0.7):
+        return "answer_from_results"
+    if args.categories == ["api"]:
+        return "try_category_guide"
+    if args.categories == ["guide"]:
+        return "try_category_api"
+    if args.min_similarity > 0.4 and len(results) < max(2, min(args.limit, 3)):
+        return "lower_min_similarity"
+    return "broaden_search"
+
+
+def build_search_response(args: argparse.Namespace, results: list[SearchResult], scope: dict[str, Any] | None = None) -> dict[str, Any]:
+    rendered_results = [search_result_to_dict(result, max_content_chars=args.max_content_chars) for result in results]
+    diagnostics = build_search_diagnostics(rendered_results, args)
+    next_action = suggest_next_action(rendered_results, diagnostics, args)
+    filters = {
+        "corpora": scope["corpora"] if scope else args.corpora,
+        "categories": args.categories,
+        "exclude_categories": args.exclude_categories,
+        "version": args.version,
+        "versions": [version.strip() for version in args.versions.split(",") if version.strip()] if args.versions else None,
+        "all_versions": args.all_versions,
+        "source_url_prefix": args.source_url_prefix,
+        "section_path_prefix": args.section_path_prefix,
+        "min_similarity": args.min_similarity,
+        "limit": args.limit,
+        "offset": args.offset,
+        "max_content_chars": args.max_content_chars,
+    }
+    if scope:
+        filters["version_scope"] = scope.get("searched_versions")
+    return {
+        "status": "success" if rendered_results else "no_results",
+        "query": args.query,
+        "retrieved_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "invocation": {
+            "tool": "doc-hub docs search",
+            "argv": sys.argv[1:] if sys.argv else None,
+            "cwd": None,
+        },
+        "executed_queries": [{"query": args.query, "filters": filters}],
+        "result_count": len(rendered_results),
+        "results": rendered_results,
+        "diagnostics": diagnostics,
+        "suggested_next_action": next_action,
+    }
 
 
 def build_search_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
@@ -712,6 +832,23 @@ def build_search_parser(parser: argparse.ArgumentParser | None = None) -> argpar
         action="store_true",
         help="Output results as JSON",
     )
+    parser.add_argument(
+        "--schema",
+        choices=["v1", "v2"],
+        default="v1",
+        help="JSON schema version to emit with --json (default: v1). Use v2 for structured agent responses.",
+    )
+    parser.add_argument(
+        "--json-object",
+        action="store_true",
+        help="Emit the structured JSON object response; equivalent to --json --schema v2.",
+    )
+    parser.add_argument(
+        "--max-content-chars",
+        type=int,
+        default=1000,
+        help="Maximum characters of content per JSON result; use -1 for full content (default: 1000).",
+    )
     return parser
 
 
@@ -734,8 +871,13 @@ def handle_search_args(args: argparse.Namespace) -> None:
     if args.versions:
         version_list = [version.strip() for version in args.versions.split(",") if version.strip()]
 
+    use_structured_json = getattr(args, "json_object", False) or getattr(args, "schema", "v1") == "v2"
+    if getattr(args, "json_object", False):
+        args.json = True
+        args.schema = "v2"
+
     try:
-        results = search_docs_sync(
+        search_output = search_docs_sync(
             args.query,
             corpora=args.corpora,
             categories=args.categories,
@@ -749,8 +891,9 @@ def handle_search_args(args: argparse.Namespace) -> None:
             versions=version_list,
             all_versions=args.all_versions,
             config=config,
+            return_scope=use_structured_json,
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         if args.json:
             import json
             import sys
@@ -760,36 +903,18 @@ def handle_search_args(args: argparse.Namespace) -> None:
             print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
+    if use_structured_json:
+        results, scope = search_output
+    else:
+        results = search_output
+        scope = None
+
     if args.json:
         import json
-        from doc_hub.documents import derive_doc_id, doc_path_from_source_file
-        print(
-            json.dumps(
-                [
-                    {
-                        "id": r.id,
-                        "corpus_id": r.corpus_id,
-                        "doc_id": derive_doc_id(
-                            r.corpus_id,
-                            r.doc_path or doc_path_from_source_file(r.source_file),
-                        ),
-                        "heading": r.heading,
-                        "section_path": r.section_path,
-                        "source_url": r.source_url,
-                        "snapshot_id": r.snapshot_id,
-                        "source_version": r.source_version,
-                        "score": r.score,
-                        "similarity": r.similarity,
-                        "category": r.category,
-                        "start_line": r.start_line,
-                        "end_line": r.end_line,
-                        "content": r.content,
-                    }
-                    for r in results
-                ],
-                indent=2,
-            )
-        )
+        if use_structured_json:
+            print(json.dumps(build_search_response(args, results, scope), indent=2))
+        else:
+            print(json.dumps([search_result_to_dict(r, max_content_chars=None) for r in results], indent=2))
         return
 
     if not results:
@@ -805,6 +930,7 @@ def handle_search_args(args: argparse.Namespace) -> None:
         doc_id = derive_doc_id(
             r.corpus_id,
             r.doc_path or doc_path_from_source_file(r.source_file),
+            snapshot_id=r.snapshot_id,
         )
         print(f"\n[{i}] {r.heading}")
         print(f"    Chunk ID:   {r.id}")
